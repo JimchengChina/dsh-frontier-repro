@@ -11,6 +11,7 @@ import { assessReproduction, recordRun } from './lib/repro.js'
 import { FrontierStore } from './lib/store.js'
 import { CollectionCoordinator } from './lib/lifecycle.js'
 import { sourceCatalogDigest } from './lib/canonical.js'
+import { buildEvidenceGraph } from './lib/graph.js'
 
 export const name = 'frontier-repro'
 export const inject = ['systemPrompt', 'tools']
@@ -374,6 +375,28 @@ export function apply(ctx, inputConfig = {}) {
         return { ok: true, record: { id: found.record.id, title: found.record.title, url: found.record.url }, assessment }
       } catch (error) {
         return { ok: false, code: 'invalid_assessment', message: error.message }
+      }
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'frontier_repro_graph',
+    description: 'Return a deterministic dependency graph joining a source, record, artifacts, requirements, evidence, runs, outputs, and visible blockers.',
+    parameters: {
+      id: { type: 'string', required: true, description: 'Frontier record id.' },
+    },
+    output: jsonOutput(),
+    async execute(args) {
+      const data = await store.read()
+      const found = requireRecord(data, args.id)
+      if (!found.ok) return found
+      return {
+        ok: true,
+        graph: buildEvidenceGraph({
+          record: found.record,
+          assessment: data.assessments[args.id],
+          runs: data.runs[args.id] ?? [],
+        }),
       }
     },
   }))
