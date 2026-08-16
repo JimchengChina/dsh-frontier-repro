@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { githubRepositoryIdentity, huggingFacePaperEnrichment } from '../lib/enrich.js'
+import { githubRepositoryEnrichment, githubRepositoryIdentity, huggingFacePaperEnrichment } from '../lib/enrich.js'
 
 test('Hugging Face paper metadata becomes bounded public artifact candidates', () => {
   const result = huggingFacePaperEnrichment({
@@ -27,4 +27,22 @@ test('GitHub repository roots are normalized without trusting subpaths', () => {
     owner: 'OpenAI', repo: 'frontier-evals', rootUrl: 'https://github.com/OpenAI/frontier-evals',
   })
   assert.equal(githubRepositoryIdentity('https://gitlab.com/openai/frontier-evals'), undefined)
+})
+
+test('GitHub metadata pins code to a full immutable commit', () => {
+  const identity = githubRepositoryIdentity('https://github.com/openai/frontier-evals')
+  const patch = githubRepositoryEnrichment({
+    full_name: 'openai/frontier-evals', html_url: 'https://github.com/openai/frontier-evals',
+    default_branch: 'main', license: { spdx_id: 'MIT' }, archived: false, disabled: false,
+    fork: false, stargazers_count: 1_283, pushed_at: '2026-04-21T20:53:31Z',
+  }, { sha: 'A'.repeat(40) }, identity)
+  assert.equal(patch.revision, 'a'.repeat(40))
+  assert.equal(patch.immutableUrl, `https://github.com/openai/frontier-evals/tree/${'a'.repeat(40)}`)
+  assert.equal(patch.license, 'MIT')
+  assert.equal(patch.archived, false)
+})
+
+test('GitHub enrichment rejects a mismatched repository response', () => {
+  const identity = githubRepositoryIdentity('https://github.com/openai/frontier-evals')
+  assert.throws(() => githubRepositoryEnrichment({ full_name: 'attacker/repo' }, { sha: 'a'.repeat(40) }, identity), /did not match/)
 })

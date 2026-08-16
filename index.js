@@ -18,12 +18,14 @@ export const Config = z.object({
   storagePath: z.string(),
   sourceFile: z.string(),
   xBearerTokenEnv: z.string().role('credential-ref').default('X_BEARER_TOKEN'),
+  githubTokenEnv: z.string().role('credential-ref').default('GITHUB_TOKEN'),
   defaultDays: z.natural().min(1).default(90),
   defaultLimit: z.natural().min(1).default(20),
   maxRecords: z.natural().min(1).default(1_000),
   requestTimeoutMs: z.natural().min(1).default(20_000),
   maxResponseBytes: z.natural().min(1).default(5 * 1024 * 1024),
   pageConcurrency: z.natural().min(1).default(3),
+  githubEnrichLimit: z.natural().default(8),
   promptGuidance: z.boolean().default(true),
   promptOrder: z.number().default(145),
 })
@@ -47,7 +49,7 @@ function resolveStoragePath(config) {
   return join(resolveDshHome(config.dshHome), 'frontier-repro', 'index.json')
 }
 
-async function xCredential(ctx, refName) {
+async function credentialValue(ctx, refName) {
   const ref = credentialRef(refName)
   const credentials = ctx.get('credentials')
   if (credentials !== undefined) return (await credentials.resolve(ref))?.value
@@ -98,12 +100,14 @@ export function apply(ctx, inputConfig = {}) {
   const config = {
     ...inputConfig,
     xBearerTokenEnv: inputConfig.xBearerTokenEnv ?? 'X_BEARER_TOKEN',
+    githubTokenEnv: inputConfig.githubTokenEnv ?? 'GITHUB_TOKEN',
     defaultDays: inputConfig.defaultDays ?? 90,
     defaultLimit: inputConfig.defaultLimit ?? 20,
     maxRecords: inputConfig.maxRecords ?? 1_000,
     requestTimeoutMs: inputConfig.requestTimeoutMs ?? 20_000,
     maxResponseBytes: inputConfig.maxResponseBytes ?? 5 * 1024 * 1024,
     pageConcurrency: inputConfig.pageConcurrency ?? 3,
+    githubEnrichLimit: inputConfig.githubEnrichLimit ?? 8,
     promptGuidance: inputConfig.promptGuidance ?? true,
     promptOrder: inputConfig.promptOrder ?? 145,
   }
@@ -175,7 +179,10 @@ export function apply(ctx, inputConfig = {}) {
       if (unknown.length > 0) return { ok: false, code: 'unknown_source', unknown_source_ids: unknown }
       const selected = [...new Set(requested)].map(id => sourceById.get(id))
       const xBearerToken = selected.some(source => source.type === 'x_user')
-        ? await xCredential(ctx, config.xBearerTokenEnv)
+        ? await credentialValue(ctx, config.xBearerTokenEnv)
+        : undefined
+      const githubToken = config.githubEnrichLimit > 0
+        ? await credentialValue(ctx, config.githubTokenEnv)
         : undefined
       const collected = await collectAll(selected, {
         query: args.query ?? '',
@@ -184,6 +191,8 @@ export function apply(ctx, inputConfig = {}) {
         timeoutMs: config.requestTimeoutMs,
         maxBytes: config.maxResponseBytes,
         pageConcurrency: config.pageConcurrency,
+        githubEnrichLimit: config.githubEnrichLimit,
+        githubToken,
         userAgent: 'dsh-frontier-repro/0.1 (+https://github.com/topics/dsh-plugin)',
       })
       await store.mergeRecords(collected.records)
@@ -199,6 +208,7 @@ export function apply(ctx, inputConfig = {}) {
         ranking: 'source provenance + recency + linked artifacts + reproducibility signals + topic relevance',
         records: ranked.map(compact),
         sources: collected.sources,
+        enrichments: collected.enrichments,
       }
     },
   }))
