@@ -74,3 +74,22 @@ test('concurrent store mutations do not overwrite each other', async () => {
   assert.equal(data.assessments.a.status, 'blocked')
   assert.equal(data.runs.b[0].verdict, 'failed')
 })
+
+test('collection commits journal their bounded inverse and migrate version one stores', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'frontier-store-journal-'))
+  const store = new FrontierStore(join(root, 'index.json'), 2, 3)
+  await store.mergeRecords([record({ id: 'old', publishedAt: '2026-08-01T00:00:00Z' })])
+  const committed = await store.commitCollection([
+    record({ id: 'old', summary: 'updated', publishedAt: '2026-08-01T00:00:00Z' }),
+    record({ id: 'new', publishedAt: '2026-08-17T00:00:00Z' }),
+  ], {
+    id: 'collection-1', requestedAt: '2026-08-17T00:00:00Z', startedAt: '2026-08-17T00:00:01Z',
+    finishedAt: '2026-08-17T00:00:02Z', input: { query: 'agents' }, partial: false,
+    sources: [{ id: 'arxiv', ok: true, count: 2, warnings: [] }], enrichments: {},
+  })
+  assert.equal(committed.version, 2)
+  assert.equal(committed.collections.length, 1)
+  assert.equal(committed.collections[0].digest.length, 64)
+  assert.deepEqual(committed.collections[0].inverse.addedIds, ['new'])
+  assert.equal(committed.collections[0].inverse.previousRecords[0].summary, record().summary)
+})

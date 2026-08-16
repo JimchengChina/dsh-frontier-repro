@@ -24,6 +24,7 @@ export const Config = z.object({
   defaultDays: z.natural().min(1).default(90),
   defaultLimit: z.natural().min(1).default(20),
   maxRecords: z.natural().min(1).default(1_000),
+  maxCollections: z.natural().min(1).default(20),
   requestTimeoutMs: z.natural().min(1).default(20_000),
   maxResponseBytes: z.natural().min(1).default(5 * 1024 * 1024),
   pageConcurrency: z.natural().min(1).default(3),
@@ -106,6 +107,7 @@ export function apply(ctx, inputConfig = {}) {
     defaultDays: inputConfig.defaultDays ?? 90,
     defaultLimit: inputConfig.defaultLimit ?? 20,
     maxRecords: inputConfig.maxRecords ?? 1_000,
+    maxCollections: inputConfig.maxCollections ?? 20,
     requestTimeoutMs: inputConfig.requestTimeoutMs ?? 20_000,
     maxResponseBytes: inputConfig.maxResponseBytes ?? 5 * 1024 * 1024,
     pageConcurrency: inputConfig.pageConcurrency ?? 3,
@@ -116,7 +118,7 @@ export function apply(ctx, inputConfig = {}) {
   const sources = mergeSources(readCustomSources(config.sourceFile))
   const catalogDigest = sourceCatalogDigest(sources)
   const sourceById = new Map(sources.map(source => [source.id, source]))
-  const store = new FrontierStore(resolveStoragePath(config), config.maxRecords)
+  const store = new FrontierStore(resolveStoragePath(config), config.maxRecords, config.maxCollections)
   const collectionCoordinator = new CollectionCoordinator()
 
   if (config.promptGuidance) {
@@ -161,6 +163,13 @@ export function apply(ctx, inputConfig = {}) {
         ok: true,
         storage_path: store.filename,
         corpus_records: data.records.length,
+        collection_history: data.collections.length,
+        ...(data.collections.at(-1) === undefined ? {} : { latest_collection: {
+          id: data.collections.at(-1).id,
+          state: data.collections.at(-1).state,
+          digest: data.collections.at(-1).digest,
+          finished_at: data.collections.at(-1).finishedAt,
+        } }),
         updated_at: data.updatedAt,
         source_catalog_digest: catalogDigest,
         collection: collectionCoordinator.snapshot(),
@@ -209,7 +218,8 @@ export function apply(ctx, inputConfig = {}) {
       if (unknown.length > 0) return { ok: false, code: 'unknown_source', unknown_source_ids: unknown }
       const selected = [...new Set(requested)].map(id => sourceById.get(id))
       const query = args.query ?? ''
-      return collectionCoordinator.run({ query, sourceIds: selected.map(source => source.id), catalogDigest }, async () => {
+      const collectionInput = { query, sourceIds: selected.map(source => source.id), catalogDigest }
+      return collectionCoordinator.run(collectionInput, async (transition) => {
         const xBearerToken = selected.some(source => source.type === 'x_user')
           ? await credentialValue(ctx, config.xBearerTokenEnv)
           : undefined
@@ -227,14 +237,22 @@ export function apply(ctx, inputConfig = {}) {
           githubToken,
           userAgent: 'dsh-frontier-repro/0.2 (+https://github.com/JimchengChina/dsh-frontier-repro)',
         })
-        await store.mergeRecords(collected.records)
+        const partial = collected.sources.some(source => !source.ok || source.warnings.length > 0)
+        await store.commitCollection(collected.records, {
+          ...transition,
+          finishedAt: new Date().toISOString(),
+          input: collectionInput,
+          partial,
+          sources: collected.sources,
+          enrichments: collected.enrichments,
+        })
         const days = boundedInteger(args.days, config.defaultDays, 1, 3_650)
         const limit = boundedInteger(args.limit, config.defaultLimit, 1, 100)
         const filtered = filterRecords(collected.records, { query, days })
         const ranked = rankRecords(filtered, query).slice(0, limit)
         return {
           ok: true,
-          partial: collected.sources.some(source => !source.ok || source.warnings.length > 0),
+          partial,
           collected: collected.records.length,
           returned: ranked.length,
           ranking: 'source provenance + recency + linked artifacts + reproducibility signals + topic relevance',
