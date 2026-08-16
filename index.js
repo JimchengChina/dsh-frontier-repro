@@ -9,6 +9,8 @@ import { collectAll, filterRecords } from './lib/collector.js'
 import { rankRecords } from './lib/rank.js'
 import { assessReproduction, recordRun } from './lib/repro.js'
 import { FrontierStore } from './lib/store.js'
+import { CollectionCoordinator } from './lib/lifecycle.js'
+import { sourceCatalogDigest } from './lib/canonical.js'
 
 export const name = 'frontier-repro'
 export const inject = ['systemPrompt', 'tools']
@@ -112,8 +114,10 @@ export function apply(ctx, inputConfig = {}) {
     promptOrder: inputConfig.promptOrder ?? 145,
   }
   const sources = mergeSources(readCustomSources(config.sourceFile))
+  const catalogDigest = sourceCatalogDigest(sources)
   const sourceById = new Map(sources.map(source => [source.id, source]))
   const store = new FrontierStore(resolveStoragePath(config), config.maxRecords)
+  const collectionCoordinator = new CollectionCoordinator()
 
   if (config.promptGuidance) {
     ctx.systemPrompt.section({
@@ -158,6 +162,8 @@ export function apply(ctx, inputConfig = {}) {
         storage_path: store.filename,
         corpus_records: data.records.length,
         updated_at: data.updatedAt,
+        source_catalog_digest: catalogDigest,
+        collection: collectionCoordinator.snapshot(),
         credentials: {
           x_api: x,
           github_api: {
@@ -202,38 +208,41 @@ export function apply(ctx, inputConfig = {}) {
       const unknown = requested.filter(id => !sourceById.has(id))
       if (unknown.length > 0) return { ok: false, code: 'unknown_source', unknown_source_ids: unknown }
       const selected = [...new Set(requested)].map(id => sourceById.get(id))
-      const xBearerToken = selected.some(source => source.type === 'x_user')
-        ? await credentialValue(ctx, config.xBearerTokenEnv)
-        : undefined
-      const githubToken = config.githubEnrichLimit > 0
-        ? await credentialValue(ctx, config.githubTokenEnv)
-        : undefined
-      const collected = await collectAll(selected, {
-        query: args.query ?? '',
-        xBearerToken,
-        xBearerTokenEnv: config.xBearerTokenEnv,
-        timeoutMs: config.requestTimeoutMs,
-        maxBytes: config.maxResponseBytes,
-        pageConcurrency: config.pageConcurrency,
-        githubEnrichLimit: config.githubEnrichLimit,
-        githubToken,
-        userAgent: 'dsh-frontier-repro/0.1 (+https://github.com/topics/dsh-plugin)',
+      const query = args.query ?? ''
+      return collectionCoordinator.run({ query, sourceIds: selected.map(source => source.id), catalogDigest }, async () => {
+        const xBearerToken = selected.some(source => source.type === 'x_user')
+          ? await credentialValue(ctx, config.xBearerTokenEnv)
+          : undefined
+        const githubToken = config.githubEnrichLimit > 0
+          ? await credentialValue(ctx, config.githubTokenEnv)
+          : undefined
+        const collected = await collectAll(selected, {
+          query,
+          xBearerToken,
+          xBearerTokenEnv: config.xBearerTokenEnv,
+          timeoutMs: config.requestTimeoutMs,
+          maxBytes: config.maxResponseBytes,
+          pageConcurrency: config.pageConcurrency,
+          githubEnrichLimit: config.githubEnrichLimit,
+          githubToken,
+          userAgent: 'dsh-frontier-repro/0.2 (+https://github.com/JimchengChina/dsh-frontier-repro)',
+        })
+        await store.mergeRecords(collected.records)
+        const days = boundedInteger(args.days, config.defaultDays, 1, 3_650)
+        const limit = boundedInteger(args.limit, config.defaultLimit, 1, 100)
+        const filtered = filterRecords(collected.records, { query, days })
+        const ranked = rankRecords(filtered, query).slice(0, limit)
+        return {
+          ok: true,
+          partial: collected.sources.some(source => !source.ok || source.warnings.length > 0),
+          collected: collected.records.length,
+          returned: ranked.length,
+          ranking: 'source provenance + recency + linked artifacts + reproducibility signals + topic relevance',
+          records: ranked.map(compact),
+          sources: collected.sources,
+          enrichments: collected.enrichments,
+        }
       })
-      await store.mergeRecords(collected.records)
-      const days = boundedInteger(args.days, config.defaultDays, 1, 3_650)
-      const limit = boundedInteger(args.limit, config.defaultLimit, 1, 100)
-      const filtered = filterRecords(collected.records, { query: args.query ?? '', days })
-      const ranked = rankRecords(filtered, args.query ?? '').slice(0, limit)
-      return {
-        ok: true,
-        partial: collected.sources.some(source => !source.ok || source.warnings.length > 0),
-        collected: collected.records.length,
-        returned: ranked.length,
-        ranking: 'source provenance + recency + linked artifacts + reproducibility signals + topic relevance',
-        records: ranked.map(compact),
-        sources: collected.sources,
-        enrichments: collected.enrichments,
-      }
     },
   }))
 
