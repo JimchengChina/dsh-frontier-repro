@@ -291,6 +291,39 @@ export function apply(ctx, inputConfig = {}) {
   }))
 
   ctx.tools.register(defineTool({
+    name: 'frontier_repro_revert_collection',
+    description: 'Revert the latest live collection batch using its stored inverse. Refuses non-LIFO reverts, changed records, or batches with assessment/run dependents.',
+    parameters: {
+      collection_id: { type: 'string', required: true, description: 'Exact collection id returned by collect or status.' },
+    },
+    output: jsonOutput(),
+    async execute(args) {
+      if (typeof args.collection_id !== 'string' || args.collection_id.trim() === '') {
+        return { ok: false, code: 'invalid_collection_id', message: 'collection_id must be a non-empty string' }
+      }
+      try {
+        return await collectionCoordinator.run({ operation: 'revert', collectionId: args.collection_id }, async () => {
+          const data = await store.revertLatestCollection(args.collection_id)
+          const entry = data.collections.find(item => item.id === args.collection_id)
+          return {
+            ok: true,
+            reverted: { id: entry.id, state: entry.state, commit_digest: entry.digest, reversion: entry.reversion },
+            corpus_records: data.records.length,
+          }
+        })
+      } catch (error) {
+        return {
+          ok: false,
+          code: error.code ?? 'collection_revert_failed',
+          message: error.message,
+          ...(error.details === undefined ? {} : { details: error.details }),
+          lifecycle: collectionCoordinator.snapshot().last,
+        }
+      }
+    },
+  }))
+
+  ctx.tools.register(defineTool({
     name: 'frontier_repro_get',
     description: 'Get one complete frontier record with provenance, discovered artifacts, saved readiness assessment, and recorded runs.',
     parameters: {

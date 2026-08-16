@@ -25,7 +25,7 @@ test('collection lifecycle serializes transitions and exposes queued work', asyn
   releaseFirst()
   const [one, two] = await Promise.all([first, second])
   assert.deepEqual(events, ['first:start', 'first:end', 'second:start', 'second:end'])
-  assert.equal(one.collection.outcome, 'committed')
+  assert.equal(one.lifecycle.outcome, 'committed')
   assert.equal(two.value, 2)
   assert.equal(coordinator.snapshot().phase, 'idle')
   assert.equal(coordinator.snapshot().last.input.query, 'second')
