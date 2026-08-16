@@ -57,7 +57,7 @@ async function credentialValue(ctx, refName) {
   return typeof value === 'string' && value !== '' ? value : undefined
 }
 
-async function xCredentialStatus(ctx, refName) {
+async function credentialStatus(ctx, refName) {
   const ref = credentialRef(refName)
   const credentials = ctx.get('credentials')
   if (credentials !== undefined) {
@@ -138,13 +138,35 @@ export function apply(ctx, inputConfig = {}) {
     output: jsonOutput(),
     async execute() {
       const data = await store.read()
-      const x = await xCredentialStatus(ctx, config.xBearerTokenEnv)
+      const x = await credentialStatus(ctx, config.xBearerTokenEnv)
+      const github = await credentialStatus(ctx, config.githubTokenEnv)
+      const capabilities = {
+        'network:https': {
+          available: true,
+          authority: 'host egress policy',
+          note: 'Actual reachability is checked per request and failures remain source-local.',
+        },
+        'credential:x-api': {
+          available: x.configured,
+          reference: x.reference,
+          source: x.source,
+          ...(x.configured ? {} : { missingCondition: `Configure ${config.xBearerTokenEnv} with X API read access.` }),
+        },
+      }
       return {
         ok: true,
         storage_path: store.filename,
         corpus_records: data.records.length,
         updated_at: data.updatedAt,
-        credentials: { x_api: x },
+        credentials: {
+          x_api: x,
+          github_api: {
+            ...github,
+            required: false,
+            effect: github.configured ? 'Authenticated GitHub artifact enrichment.' : 'Anonymous GitHub rate limits apply; collection still works.',
+          },
+        },
+        capabilities,
         sources: sources.map(source => ({
           id: source.id,
           name: source.name,
@@ -152,10 +174,12 @@ export function apply(ctx, inputConfig = {}) {
           type: source.type,
           source_class: source.sourceClass,
           url: source.url,
-          available: source.type !== 'x_user' || x.configured,
-          ...(source.type === 'x_user' && !x.configured
-            ? { missing_condition: `Configure ${config.xBearerTokenEnv} with X API read access.` }
-            : {}),
+          requires: source.requires,
+          available: source.requires.every(capability => capabilities[capability]?.available === true),
+          blockers: source.requires.filter(capability => capabilities[capability]?.available !== true).map(capability => ({
+            capability,
+            condition: capabilities[capability]?.missingCondition ?? `Provide capability ${capability}.`,
+          })),
           ...(source.identityEvidenceUrl === undefined ? {} : { identity_evidence_url: source.identityEvidenceUrl }),
           ...(source.verifiedAt === undefined ? {} : { identity_verified_at: source.verifiedAt }),
         })),
