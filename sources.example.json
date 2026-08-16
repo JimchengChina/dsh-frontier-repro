@@ -1,0 +1,24 @@
+[
+  {
+    "id": "your-lab-research-feed",
+    "type": "feed",
+    "sourceClass": "official_lab",
+    "lab": "Your Lab",
+    "name": "Your Lab Research Feed",
+    "url": "https://example.com/research/feed.xml",
+    "maxItems": 20
+  },
+  {
+    "id": "your-lab-founder-x",
+    "type": "x_user",
+    "sourceClass": "person_x",
+    "lab": "Your Lab",
+    "person": "Founder Name",
+    "role": "founder and CEO",
+    "name": "Founder Name on X",
+    "username": "FounderHandle",
+    "url": "https://x.com/FounderHandle",
+    "identityEvidenceUrl": "https://example.com/company/leadership",
+    "maxItems": 20
+  }
+]

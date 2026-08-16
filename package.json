@@ -1,0 +1,69 @@
+{
+  "name": "dsh-frontier-repro",
+  "version": "0.1.0",
+  "description": "Evidence-first frontier AI radar and reproducibility gate for DeepSeek Harness",
+  "keywords": [
+    "deepseek-harness",
+    "dsh-plugin",
+    "ai-research",
+    "reproducibility",
+    "arxiv"
+  ],
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./core": "./lib/repro.js",
+    "./catalog": "./lib/catalog.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "lib",
+    "cordis.patch.yml",
+    "sources.example.json",
+    "README.md",
+    "README.zh-CN.md",
+    "CHANGELOG.md",
+    "SECURITY.md",
+    "docs",
+    "scripts",
+    "LICENSE"
+  ],
+  "scripts": {
+    "check": "node --check index.js && node --check lib/*.js && node --check scripts/*.mjs",
+    "test": "node --test",
+    "verify": "pnpm run check && pnpm test",
+    "smoke:plugin": "node scripts/smoke-plugin.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "license": "MIT",
+  "peerDependencies": {
+    "@deepseek-ai/dsh-credentials": ">=0.1.0-rc.6 <0.2.0",
+    "@deepseek-ai/dsh-home-paths": ">=0.1.0-rc.6 <0.2.0",
+    "@deepseek-ai/dsh-tools": ">=0.1.0-rc.6 <0.2.0",
+    "@deepseek-ai/schemastery": "^3.18.1"
+  },
+  "dependencies": {
+    "cheerio": "^1.2.0",
+    "undici": "^7.29.0"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/dsh-credentials": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-home-paths": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-system-prompt": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-tools": "0.1.0-rc.6",
+    "@deepseek-ai/schemastery": "3.18.1"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

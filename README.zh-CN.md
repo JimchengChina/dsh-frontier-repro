@@ -1,0 +1,148 @@
+# dsh-frontier-repro
+
+给 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 用的“一手信源 → 复现证据档案”插件。
+
+它不是另一个 AI 新闻阅读器，也不是另一个 arXiv 搜索/论文总结插件。它只做现有 DSH 插件尚未完整覆盖的一段链路：从经过身份约束的一手渠道发现前沿能力，保留可审计来源与实现产物，再严格判断能做 **精确复现、缩小规模复现、行为等价复现**，还是仍然缺条件；真正运行后，还要求用命令、产物和指标留下证据。
+
+## 为什么不是重复项目
+
+DSH 生态已经有很强的论文和资讯工具：`dsh-ai4scholar`、`dsh-literature` 负责检索、全文与引用，`dsh-paper-workshop` 负责精读、知识库和教学式复现清单，`dsh-news` 负责通用 RSS 阅读；更新的 `dsh-research-plugins` 负责科研主张审查，`dsh-science-workbench` 负责可回放实验执行。这个插件刻意不复制这些能力：
+
+| 已有能力 | 本插件不做 | 本插件补上的环节 |
+|---|---|---|
+| arXiv / Semantic Scholar / dblp 检索 | 不做全库学术搜索、引用网络或 PDF 阅读 | 把 arXiv 与实验室发布放进同一条“能力信号”时间线 |
+| AI 新闻/RSS 面板 | 不做通用订阅、全文阅读 UI 或媒体聚合 | 只接一手源，展示身份依据、来源等级和可解释评分 |
+| 论文精读与学习笔记 | 不做七阶段教学、术语表或 Obsidian 管理 | 把文章/模型/代码线索转成模式化复现条件矩阵 |
+| 复现清单 | 不用口头打勾代表成功 | 条件准备度与运行结果分离；`passed` 必须附命令、产物和指标 |
+
+详细去重审计见 [docs/research.md](docs/research.md)。
+
+## 默认一手来源
+
+- arXiv：`cs.AI`、`cs.CL`、`cs.LG`、`cs.CV`、`cs.RO`、`cs.SE`，使用官方 Atom API。
+- 实验室官网：OpenAI News RSS、Anthropic Newsroom / Engineering、Google DeepMind News RSS、DeepSeek API News、Z.ai 模型发布记录；Z.ai 博客当前没有可发现的官方索引，模型页仍会保留博客直链作为复现产物线索。
+- 官方复现产物：DeepSeek 和 Z.ai 的已验证 Hugging Face 组织模型流。
+- 核心人员博客：Sam Altman 个人博客、Anthropic 联合创始人 Jack Clark 的 Import AI。
+- 核心人员 X：Sam Altman、Dario Amodei、Demis Hassabis。只走 X API v2；无凭证时明确报告缺失条件，绝不退化成网页抓取。
+
+DeepSeek 创始人和 GLM 核心人员没有被硬塞进默认 X 清单：目前没有足够稳定、可由实验室官网交叉验证的公开个人流时，宁可留空，也不收录同名或搬运账号。可以通过受信任的本地 `sourceFile` 添加，并必须给出 `identityEvidenceUrl`。
+
+## 六个工具
+
+| 工具 | 用途 |
+|---|---|
+| `frontier_repro_status` | 查看来源、语料库状态和缺失凭证；不联网 |
+| `frontier_repro_collect` | 刷新指定一手源，去重、落盘并返回可解释排序 |
+| `frontier_repro_search` | 只搜索本地语料库，不联网 |
+| `frontier_repro_get` | 读取完整来源、实现产物、准备度和运行记录 |
+| `frontier_repro_assess` | 对 exact / scaled / behavioral 模式执行条件门禁 |
+| `frontier_repro_record_result` | 记录实际命令、产物、指标、偏差和结果 |
+
+采集阶段会先剔除实验室人事/商务公告和人员生活动态；排序也不是模型黑箱。返回值逐项显示：信源等级、时效、实现产物、复现关键词、前沿主题和查询相关性。Hugging Face 模型流会读取最近模型的 README，只提取论文、代码、数据和评测链接，不保存全文。
+
+## 安装
+
+要求 Node.js `^22.19` 或 `>=24`，以及 DeepSeek Harness `0.1.0-rc.6` 兼容版本。
+
+```bash
+pnpm install
+dsh plugin --profile web add /absolute/path/to/dsh-frontier-repro
+# 或用于 CLI
+dsh plugin --profile headless add /absolute/path/to/dsh-frontier-repro
+```
+
+重启对应 profile。默认数据保存在 `$DSH_HOME/frontier-repro/index.json`，文件和目录分别以 `0600` / `0700` 创建。
+
+## 典型工作流
+
+先说：
+
+> 收集最近 30 天关于 long-horizon coding agent 的一手前沿信息，优先找有代码、权重和评测的项目。
+
+选中一条后：
+
+> 我要复现它的长任务断点恢复能力。先给我 exact / scaled / behavioral 三档可行性，不够的信息继续查一手材料；条件满足后在独立目录做最小实现和对照评测。
+
+插件会要求把条件写成如下矩阵。`available` 必须带证据；`not_required` 必须有理由：
+
+```json
+{
+  "specification": { "state": "available", "evidence": ["https://arxiv.org/abs/..."], "note": "固定到 v2" },
+  "code": { "state": "available", "evidence": ["https://github.com/org/repo/tree/COMMIT"], "note": "固定 commit" },
+  "model_access": { "state": "missing", "evidence": [], "note": "原始权重未发布" },
+  "data": { "state": "unknown", "evidence": [], "note": "未找到训练集声明" },
+  "compute": { "state": "available", "evidence": ["local:nvidia-smi 4xA100-80GB"], "note": "可用 48 小时" },
+  "runtime": { "state": "available", "evidence": ["local:env-lock.json"], "note": "CUDA/依赖已锁定" },
+  "license": { "state": "available", "evidence": ["https://github.com/org/repo/blob/COMMIT/LICENSE"], "note": "允许研究使用" },
+  "evaluation": { "state": "available", "evidence": ["https://github.com/org/repo/tree/COMMIT/eval"], "note": "主指标容差 ±1" },
+  "reference_access": { "state": "not_required", "evidence": [], "note": "exact 模式直接运行权重" },
+  "safety_and_scope": { "state": "available", "evidence": ["local:SCOPE.md"], "note": "仅隔离测试数据" }
+}
+```
+
+准备度只有三层含义：
+
+- `ready_exact`：原始实现所需条件已有证据，可以开始执行；不代表已复现。
+- `ready_scaled`：允许明确记录过的规模/替代品差异；不得宣传成 exact。
+- `ready_behavioral`：只比较可观察行为、接口和指标；不声称还原内部机制。
+- `blocked` / `insufficient_evidence`：列出缺失条件和下一步动作，不能开始成功叙述。
+
+完成执行后，只有提供实际命令、结果文件/提交、测量指标时，`frontier_repro_record_result` 才接受 `passed`。
+
+## X API 条件
+
+设置凭证引用 `X_BEARER_TOKEN`：
+
+```bash
+export X_BEARER_TOKEN='...'
+dsh web
+```
+
+也可以通过 DSH 的 credentials 存储同名引用。插件每次采集重新解析凭证，不把值写进配置、语料库或工具输出。X 的访问和计费由 X API 账户决定；缺 token、账户无读取权限、额度不足时，`frontier_repro_status` / `collect` 会列明条件，其余来源继续工作。
+
+## 配置
+
+在 profile 的 patch 中覆盖插件行：
+
+```yaml
+- id: frontier-repro
+  config:
+    defaultDays: 90
+    defaultLimit: 20
+    maxRecords: 1000
+    requestTimeoutMs: 20000
+    maxResponseBytes: 5242880
+    pageConcurrency: 3
+    xBearerTokenEnv: X_BEARER_TOKEN
+    # storagePath: /absolute/path/index.json
+    # sourceFile: /absolute/path/sources.json
+    promptGuidance: true
+    promptOrder: 145
+```
+
+`sourceFile` 是启动时读取的本地管理员配置，不接受模型在工具参数中传入任意 URL。支持 `feed`、`page`、`official_index`、`sitemap`、`arxiv`、`huggingface_models`、`x_user`；人员来源强制要求姓名、角色和官网身份依据。参见 [sources.example.json](sources.example.json) 与 [docs/source-policy.md](docs/source-policy.md)。
+
+## 验证
+
+```bash
+pnpm run verify
+node scripts/smoke.mjs
+pnpm run smoke:plugin
+# 指定来源
+node scripts/smoke.mjs openai-news google-deepmind-news zai-release-notes
+```
+
+`verify` 包含语法检查、解析器/排序/存储/复现门禁单元测试，以及通过真实 DSH `ToolRuntime` 的装配与卸载测试。`smoke.mjs` 直接验证各来源，`smoke:plugin` 则通过真实工具调用验证“采集 → 落盘 → 排序”；两者都是只读网络冒烟，不会调用 X。
+
+## 已知限制
+
+- 官网结构会变化。各来源独立失败，成功结果仍会保存；失败和页面级警告会原样列出。
+- OpenAI RSS 可以稳定获取，但正文页面可能拒绝自动客户端；插件保留 RSS 元数据，选中后可让 DSH 的浏览器/网页工具继续核验。
+- arXiv 条目只证明论文存在，不证明结论正确；官方博客也属于发布方自述。评分是发现优先级，不是可信度结论。
+- X API 需要用户自己的凭证、权限和预算；插件不绕过访问控制。
+- 准备度基于 agent 提交的证据矩阵。插件检查完整性和一致性，不替代人工验证证据内容。
+- 当前没有后台定时器；可用 DSH 已有的 schedule/cron 能力定期调用 `frontier_repro_collect`，避免重复实现调度平台。
+
+## License
+
+MIT
