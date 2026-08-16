@@ -2,6 +2,8 @@
 
 Research checked on 2026-08-16.
 
+The architectural follow-up is documented in [architecture.md](architecture.md). It maps Cordis's revertible effects and reactive coeffects to collection transactions, explicit source capabilities, immutable manifests, and evidence topology.
+
 ## Existing DSH plugins
 
 The [`dsh-plugin` GitHub topic](https://github.com/topics/dsh-plugin) and repository searches show several occupied categories:
@@ -47,3 +49,10 @@ The resulting rule is deliberately conservative:
 3. Exact, scaled, and behavioral reproductions are different claims and cannot be silently upgraded.
 4. A successful run must retain commands, artifacts, measurements, and deviations.
 5. Missing licenses, access rights, evaluation, or safety scope are first-class blockers, not footnotes.
+
+## Related implementation patterns
+
+- Hugging Face Paper Pages provide structured paper-to-model/dataset/Space/repository links. These links are useful artifact candidates but remain community-maintained metadata, so the primary arXiv provenance is retained.
+- OpenAI PaperBench separates rollout, reproduction in a fresh container, and rubric grading. Frontier Repro adopts the state separation without embedding an execution sandbox.
+- DVC and MLflow already own full experiment versioning/tracking. This plugin exports bounded handoff metadata instead of becoming another experiment platform.
+- RO-Crate and in-toto motivate portable entity graphs and material/product/byproduct terminology. The plugin uses canonical digests and explicit edges, but does not claim either standard's complete schema or signature guarantees.
