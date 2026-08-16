@@ -56,6 +56,7 @@ test('real ToolRuntime registers the evidence gate and refuses unsupported succe
 
   const assessed = valueOf(await call(ctx, 'assess', 'frontier_repro_assess', {
     id: 'paper-1', target: 'Match the released eval', mode: 'behavioral', requirements: available('behavioral'),
+    rubric: [{ id: 'accuracy', description: 'Match accuracy', metric: 'accuracy', operator: 'gte', expected: 0.9 }],
   }))
   assert.equal(assessed.assessment.status, 'ready_behavioral')
 

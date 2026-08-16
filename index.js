@@ -357,6 +357,11 @@ export function apply(ctx, inputConfig = {}) {
         description: 'Object keyed by specification, code, model_access, data, compute, runtime, license, evaluation, reference_access, safety_and_scope. Each value: {state: available|missing|unknown|not_required, evidence: string[], note: string}.',
       },
       environment: { type: 'json', description: 'Available GPUs/CPU/RAM/storage, OS, budget, accounts, and time window.' },
+      rubric: {
+        type: 'json',
+        required: true,
+        description: 'Array of 1-50 criteria: {id, description, metric, operator: gte|lte|equal|within, expected, tolerance?, weight?, required?}.',
+      },
     },
     output: jsonOutput(),
     async execute(args) {
@@ -370,6 +375,7 @@ export function apply(ctx, inputConfig = {}) {
           mode: args.mode,
           requirements: args.requirements,
           environment: args.environment ?? {},
+          rubric: args.rubric,
         })
         await store.saveAssessment(args.id, assessment)
         return { ok: true, record: { id: found.record.id, title: found.record.title, url: found.record.url }, assessment }
@@ -420,6 +426,14 @@ export function apply(ctx, inputConfig = {}) {
       const found = requireRecord(data, args.id)
       if (!found.ok) return found
       try {
+        const assessment = data.assessments[args.id]
+        if (args.verdict === 'passed' && (assessment === undefined || assessment.mode !== args.mode || !assessment.status.startsWith('ready_'))) {
+          return {
+            ok: false,
+            code: 'assessment_not_ready',
+            message: 'A passed run requires a saved ready assessment for the same reproduction mode.',
+          }
+        }
         const run = recordRun({
           recordId: args.id,
           mode: args.mode,
@@ -429,6 +443,7 @@ export function apply(ctx, inputConfig = {}) {
           metrics: args.metrics,
           deviations: args.deviations,
           notes: args.notes,
+          rubric: assessment?.rubric,
         })
         if (!run.accepted) return { ok: false, code: 'insufficient_run_evidence', problems: run.problems, run }
         await store.appendRun(args.id, run)
