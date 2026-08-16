@@ -46,3 +46,15 @@ test('GitHub enrichment rejects a mismatched repository response', () => {
   const identity = githubRepositoryIdentity('https://github.com/openai/frontier-evals')
   assert.throws(() => githubRepositoryEnrichment({ full_name: 'attacker/repo' }, { sha: 'a'.repeat(40) }, identity), /did not match/)
 })
+
+test('GitHub enrichment accepts a canonical rename only after an API redirect', () => {
+  const identity = githubRepositoryIdentity('https://github.com/lobehub/lobe-chat')
+  const patch = githubRepositoryEnrichment({
+    full_name: 'lobehub/lobehub', html_url: 'https://github.com/lobehub/lobehub', default_branch: 'canary',
+  }, { sha: 'b'.repeat(40) }, identity, {
+    requestedUrl: 'https://api.github.com/repos/lobehub/lobe-chat',
+    responseUrl: 'https://api.github.com/repositories/599536282',
+  })
+  assert.equal(patch.repositoryUrl, 'https://github.com/lobehub/lobehub')
+  assert.equal(patch.redirectedFrom, 'https://github.com/lobehub/lobe-chat')
+})
