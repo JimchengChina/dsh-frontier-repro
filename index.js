@@ -9,6 +9,10 @@ import { collectAll, filterRecords } from './lib/collector.js'
 import { rankRecords } from './lib/rank.js'
 import { assessReproduction, recordRun } from './lib/repro.js'
 import { FrontierStore } from './lib/store.js'
+import { CollectionCoordinator } from './lib/lifecycle.js'
+import { sourceCatalogDigest } from './lib/canonical.js'
+import { buildEvidenceGraph } from './lib/graph.js'
+import { createReproductionManifest } from './lib/manifest.js'
 
 export const name = 'frontier-repro'
 export const inject = ['systemPrompt', 'tools']
@@ -18,12 +22,15 @@ export const Config = z.object({
   storagePath: z.string(),
   sourceFile: z.string(),
   xBearerTokenEnv: z.string().role('credential-ref').default('X_BEARER_TOKEN'),
+  githubTokenEnv: z.string().role('credential-ref').default('GITHUB_TOKEN'),
   defaultDays: z.natural().min(1).default(90),
   defaultLimit: z.natural().min(1).default(20),
   maxRecords: z.natural().min(1).default(1_000),
+  maxCollections: z.natural().min(1).default(20),
   requestTimeoutMs: z.natural().min(1).default(20_000),
   maxResponseBytes: z.natural().min(1).default(5 * 1024 * 1024),
   pageConcurrency: z.natural().min(1).default(3),
+  githubEnrichLimit: z.natural().default(8),
   promptGuidance: z.boolean().default(true),
   promptOrder: z.number().default(145),
 })
@@ -47,7 +54,7 @@ function resolveStoragePath(config) {
   return join(resolveDshHome(config.dshHome), 'frontier-repro', 'index.json')
 }
 
-async function xCredential(ctx, refName) {
+async function credentialValue(ctx, refName) {
   const ref = credentialRef(refName)
   const credentials = ctx.get('credentials')
   if (credentials !== undefined) return (await credentials.resolve(ref))?.value
@@ -55,7 +62,7 @@ async function xCredential(ctx, refName) {
   return typeof value === 'string' && value !== '' ? value : undefined
 }
 
-async function xCredentialStatus(ctx, refName) {
+async function credentialStatus(ctx, refName) {
   const ref = credentialRef(refName)
   const credentials = ctx.get('credentials')
   if (credentials !== undefined) {
@@ -98,18 +105,23 @@ export function apply(ctx, inputConfig = {}) {
   const config = {
     ...inputConfig,
     xBearerTokenEnv: inputConfig.xBearerTokenEnv ?? 'X_BEARER_TOKEN',
+    githubTokenEnv: inputConfig.githubTokenEnv ?? 'GITHUB_TOKEN',
     defaultDays: inputConfig.defaultDays ?? 90,
     defaultLimit: inputConfig.defaultLimit ?? 20,
     maxRecords: inputConfig.maxRecords ?? 1_000,
+    maxCollections: inputConfig.maxCollections ?? 20,
     requestTimeoutMs: inputConfig.requestTimeoutMs ?? 20_000,
     maxResponseBytes: inputConfig.maxResponseBytes ?? 5 * 1024 * 1024,
     pageConcurrency: inputConfig.pageConcurrency ?? 3,
+    githubEnrichLimit: inputConfig.githubEnrichLimit ?? 8,
     promptGuidance: inputConfig.promptGuidance ?? true,
     promptOrder: inputConfig.promptOrder ?? 145,
   }
   const sources = mergeSources(readCustomSources(config.sourceFile))
+  const catalogDigest = sourceCatalogDigest(sources)
   const sourceById = new Map(sources.map(source => [source.id, source]))
-  const store = new FrontierStore(resolveStoragePath(config), config.maxRecords)
+  const store = new FrontierStore(resolveStoragePath(config), config.maxRecords, config.maxCollections)
+  const collectionCoordinator = new CollectionCoordinator()
 
   if (config.promptGuidance) {
     ctx.systemPrompt.section({
@@ -122,7 +134,8 @@ export function apply(ctx, inputConfig = {}) {
         + 'A ready_exact, ready_scaled, or ready_behavioral result means prerequisites are documented; it does not mean the feature was reproduced. '
         + 'Use normal filesystem, shell, web, and evaluation tools to implement in an isolated workspace. Pin artifact versions, begin with the smallest baseline, '
         + 'and do not upgrade scaled or behavioral equivalence to an exact-reproduction claim. Record executed commands, artifact paths, metrics, deviations, '
-        + 'and the honest verdict with frontier_repro_record_result. Never mark a run passed without measurable evaluation evidence. '
+        + 'and the honest verdict with frontier_repro_record_result. Never mark a run passed without measurable evaluation evidence. Use frontier_repro_graph '
+        + 'to inspect missing dependencies and frontier_repro_manifest to hand a frozen plan to an execution system. '
         + 'When X sources are unavailable, report the missing X_BEARER_TOKEN/API access condition instead of scraping X pages.',
     })
   }
@@ -134,13 +147,44 @@ export function apply(ctx, inputConfig = {}) {
     output: jsonOutput(),
     async execute() {
       const data = await store.read()
-      const x = await xCredentialStatus(ctx, config.xBearerTokenEnv)
+      const x = await credentialStatus(ctx, config.xBearerTokenEnv)
+      const github = await credentialStatus(ctx, config.githubTokenEnv)
+      const capabilities = {
+        'network:https': {
+          available: true,
+          authority: 'host egress policy',
+          note: 'Actual reachability is checked per request and failures remain source-local.',
+        },
+        'credential:x-api': {
+          available: x.configured,
+          reference: x.reference,
+          source: x.source,
+          ...(x.configured ? {} : { missingCondition: `Configure ${config.xBearerTokenEnv} with X API read access.` }),
+        },
+      }
       return {
         ok: true,
         storage_path: store.filename,
         corpus_records: data.records.length,
+        collection_history: data.collections.length,
+        ...(data.collections.at(-1) === undefined ? {} : { latest_collection: {
+          id: data.collections.at(-1).id,
+          state: data.collections.at(-1).state,
+          digest: data.collections.at(-1).digest,
+          finished_at: data.collections.at(-1).finishedAt,
+        } }),
         updated_at: data.updatedAt,
-        credentials: { x_api: x },
+        source_catalog_digest: catalogDigest,
+        collection: collectionCoordinator.snapshot(),
+        credentials: {
+          x_api: x,
+          github_api: {
+            ...github,
+            required: false,
+            effect: github.configured ? 'Authenticated GitHub artifact enrichment.' : 'Anonymous GitHub rate limits apply; collection still works.',
+          },
+        },
+        capabilities,
         sources: sources.map(source => ({
           id: source.id,
           name: source.name,
@@ -148,10 +192,12 @@ export function apply(ctx, inputConfig = {}) {
           type: source.type,
           source_class: source.sourceClass,
           url: source.url,
-          available: source.type !== 'x_user' || x.configured,
-          ...(source.type === 'x_user' && !x.configured
-            ? { missing_condition: `Configure ${config.xBearerTokenEnv} with X API read access.` }
-            : {}),
+          requires: source.requires,
+          available: source.requires.every(capability => capabilities[capability]?.available === true),
+          blockers: source.requires.filter(capability => capabilities[capability]?.available !== true).map(capability => ({
+            capability,
+            condition: capabilities[capability]?.missingCondition ?? `Provide capability ${capability}.`,
+          })),
           ...(source.identityEvidenceUrl === undefined ? {} : { identity_evidence_url: source.identityEvidenceUrl }),
           ...(source.verifiedAt === undefined ? {} : { identity_verified_at: source.verifiedAt }),
         })),
@@ -174,32 +220,50 @@ export function apply(ctx, inputConfig = {}) {
       const unknown = requested.filter(id => !sourceById.has(id))
       if (unknown.length > 0) return { ok: false, code: 'unknown_source', unknown_source_ids: unknown }
       const selected = [...new Set(requested)].map(id => sourceById.get(id))
-      const xBearerToken = selected.some(source => source.type === 'x_user')
-        ? await xCredential(ctx, config.xBearerTokenEnv)
-        : undefined
-      const collected = await collectAll(selected, {
-        query: args.query ?? '',
-        xBearerToken,
-        xBearerTokenEnv: config.xBearerTokenEnv,
-        timeoutMs: config.requestTimeoutMs,
-        maxBytes: config.maxResponseBytes,
-        pageConcurrency: config.pageConcurrency,
-        userAgent: 'dsh-frontier-repro/0.1 (+https://github.com/topics/dsh-plugin)',
+      const query = args.query ?? ''
+      const collectionInput = { query, sourceIds: selected.map(source => source.id), catalogDigest }
+      return collectionCoordinator.run(collectionInput, async (transition) => {
+        const xBearerToken = selected.some(source => source.type === 'x_user')
+          ? await credentialValue(ctx, config.xBearerTokenEnv)
+          : undefined
+        const githubToken = config.githubEnrichLimit > 0
+          ? await credentialValue(ctx, config.githubTokenEnv)
+          : undefined
+        const collected = await collectAll(selected, {
+          query,
+          xBearerToken,
+          xBearerTokenEnv: config.xBearerTokenEnv,
+          timeoutMs: config.requestTimeoutMs,
+          maxBytes: config.maxResponseBytes,
+          pageConcurrency: config.pageConcurrency,
+          githubEnrichLimit: config.githubEnrichLimit,
+          githubToken,
+          userAgent: 'dsh-frontier-repro/0.2 (+https://github.com/JimchengChina/dsh-frontier-repro)',
+        })
+        const partial = collected.sources.some(source => !source.ok || source.warnings.length > 0)
+        await store.commitCollection(collected.records, {
+          ...transition,
+          finishedAt: new Date().toISOString(),
+          input: collectionInput,
+          partial,
+          sources: collected.sources,
+          enrichments: collected.enrichments,
+        })
+        const days = boundedInteger(args.days, config.defaultDays, 1, 3_650)
+        const limit = boundedInteger(args.limit, config.defaultLimit, 1, 100)
+        const filtered = filterRecords(collected.records, { query, days })
+        const ranked = rankRecords(filtered, query).slice(0, limit)
+        return {
+          ok: true,
+          partial,
+          collected: collected.records.length,
+          returned: ranked.length,
+          ranking: 'source provenance + recency + linked artifacts + reproducibility signals + topic relevance',
+          records: ranked.map(compact),
+          sources: collected.sources,
+          enrichments: collected.enrichments,
+        }
       })
-      await store.mergeRecords(collected.records)
-      const days = boundedInteger(args.days, config.defaultDays, 1, 3_650)
-      const limit = boundedInteger(args.limit, config.defaultLimit, 1, 100)
-      const filtered = filterRecords(collected.records, { query: args.query ?? '', days })
-      const ranked = rankRecords(filtered, args.query ?? '').slice(0, limit)
-      return {
-        ok: true,
-        partial: collected.sources.some(source => !source.ok || source.warnings.length > 0),
-        collected: collected.records.length,
-        returned: ranked.length,
-        ranking: 'source provenance + recency + linked artifacts + reproducibility signals + topic relevance',
-        records: ranked.map(compact),
-        sources: collected.sources,
-      }
     },
   }))
 
@@ -226,6 +290,39 @@ export function apply(ctx, inputConfig = {}) {
       })
       const ranked = rankRecords(filtered, args.query ?? '').slice(0, limit)
       return { ok: true, total: filtered.length, returned: ranked.length, records: ranked.map(compact) }
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'frontier_repro_revert_collection',
+    description: 'Revert the latest live collection batch using its stored inverse. Refuses non-LIFO reverts, changed records, or batches with assessment/run dependents.',
+    parameters: {
+      collection_id: { type: 'string', required: true, description: 'Exact collection id returned by collect or status.' },
+    },
+    output: jsonOutput(),
+    async execute(args) {
+      if (typeof args.collection_id !== 'string' || args.collection_id.trim() === '') {
+        return { ok: false, code: 'invalid_collection_id', message: 'collection_id must be a non-empty string' }
+      }
+      try {
+        return await collectionCoordinator.run({ operation: 'revert', collectionId: args.collection_id }, async () => {
+          const data = await store.revertLatestCollection(args.collection_id)
+          const entry = data.collections.find(item => item.id === args.collection_id)
+          return {
+            ok: true,
+            reverted: { id: entry.id, state: entry.state, commit_digest: entry.digest, reversion: entry.reversion },
+            corpus_records: data.records.length,
+          }
+        })
+      } catch (error) {
+        return {
+          ok: false,
+          code: error.code ?? 'collection_revert_failed',
+          message: error.message,
+          ...(error.details === undefined ? {} : { details: error.details }),
+          lifecycle: collectionCoordinator.snapshot().last,
+        }
+      }
     },
   }))
 
@@ -262,6 +359,11 @@ export function apply(ctx, inputConfig = {}) {
         description: 'Object keyed by specification, code, model_access, data, compute, runtime, license, evaluation, reference_access, safety_and_scope. Each value: {state: available|missing|unknown|not_required, evidence: string[], note: string}.',
       },
       environment: { type: 'json', description: 'Available GPUs/CPU/RAM/storage, OS, budget, accounts, and time window.' },
+      rubric: {
+        type: 'json',
+        required: true,
+        description: 'Array of 1-50 criteria: {id, description, metric, operator: gte|lte|equal|within, expected, tolerance?, weight?, required?}.',
+      },
     },
     output: jsonOutput(),
     async execute(args) {
@@ -275,11 +377,34 @@ export function apply(ctx, inputConfig = {}) {
           mode: args.mode,
           requirements: args.requirements,
           environment: args.environment ?? {},
+          rubric: args.rubric,
         })
         await store.saveAssessment(args.id, assessment)
         return { ok: true, record: { id: found.record.id, title: found.record.title, url: found.record.url }, assessment }
       } catch (error) {
         return { ok: false, code: 'invalid_assessment', message: error.message }
+      }
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'frontier_repro_graph',
+    description: 'Return a deterministic dependency graph joining a source, record, artifacts, requirements, evidence, runs, outputs, and visible blockers.',
+    parameters: {
+      id: { type: 'string', required: true, description: 'Frontier record id.' },
+    },
+    output: jsonOutput(),
+    async execute(args) {
+      const data = await store.read()
+      const found = requireRecord(data, args.id)
+      if (!found.ok) return found
+      return {
+        ok: true,
+        graph: buildEvidenceGraph({
+          record: found.record,
+          assessment: data.assessments[args.id],
+          runs: data.runs[args.id] ?? [],
+        }),
       }
     },
   }))
@@ -303,6 +428,14 @@ export function apply(ctx, inputConfig = {}) {
       const found = requireRecord(data, args.id)
       if (!found.ok) return found
       try {
+        const assessment = data.assessments[args.id]
+        if (args.verdict === 'passed' && (assessment === undefined || assessment.mode !== args.mode || !assessment.status.startsWith('ready_'))) {
+          return {
+            ok: false,
+            code: 'assessment_not_ready',
+            message: 'A passed run requires a saved ready assessment for the same reproduction mode.',
+          }
+        }
         const run = recordRun({
           recordId: args.id,
           mode: args.mode,
@@ -312,12 +445,40 @@ export function apply(ctx, inputConfig = {}) {
           metrics: args.metrics,
           deviations: args.deviations,
           notes: args.notes,
+          rubric: assessment?.rubric,
         })
         if (!run.accepted) return { ok: false, code: 'insufficient_run_evidence', problems: run.problems, run }
         await store.appendRun(args.id, run)
         return { ok: true, run }
       } catch (error) {
         return { ok: false, code: 'invalid_run', message: error.message }
+      }
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'frontier_repro_manifest',
+    description: 'Return a canonical SHA-256 reproduction handoff manifest with materials, plan, rubric, products, byproducts, and evidence-graph digest. This is not a signature or execution proof.',
+    parameters: {
+      id: { type: 'string', required: true, description: 'Frontier record id with a saved assessment.' },
+    },
+    output: jsonOutput(),
+    async execute(args) {
+      const data = await store.read()
+      const found = requireRecord(data, args.id)
+      if (!found.ok) return found
+      const assessment = data.assessments[args.id]
+      if (assessment === undefined) {
+        return { ok: false, code: 'assessment_required', message: 'Create and save a reproduction assessment before exporting a manifest.' }
+      }
+      return {
+        ok: true,
+        manifest: createReproductionManifest({
+          record: found.record,
+          assessment,
+          runs: data.runs[args.id] ?? [],
+          sourceCatalogDigest: catalogDigest,
+        }),
       }
     },
   }))

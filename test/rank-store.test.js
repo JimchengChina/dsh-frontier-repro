@@ -74,3 +74,49 @@ test('concurrent store mutations do not overwrite each other', async () => {
   assert.equal(data.assessments.a.status, 'blocked')
   assert.equal(data.runs.b[0].verdict, 'failed')
 })
+
+test('collection commits journal their bounded inverse and migrate version one stores', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'frontier-store-journal-'))
+  const store = new FrontierStore(join(root, 'index.json'), 2, 3)
+  await store.mergeRecords([record({ id: 'old', publishedAt: '2026-08-01T00:00:00Z' })])
+  const committed = await store.commitCollection([
+    record({ id: 'old', summary: 'updated', publishedAt: '2026-08-01T00:00:00Z' }),
+    record({ id: 'new', publishedAt: '2026-08-17T00:00:00Z' }),
+  ], {
+    id: 'collection-1', requestedAt: '2026-08-17T00:00:00Z', startedAt: '2026-08-17T00:00:01Z',
+    finishedAt: '2026-08-17T00:00:02Z', input: { query: 'agents' }, partial: false,
+    sources: [{ id: 'arxiv', ok: true, count: 2, warnings: [] }], enrichments: {},
+  })
+  assert.equal(committed.version, 2)
+  assert.equal(committed.collections.length, 1)
+  assert.equal(committed.collections[0].digest.length, 64)
+  assert.deepEqual(committed.collections[0].inverse.addedIds, ['new'])
+  assert.equal(committed.collections[0].inverse.previousRecords[0].summary, record().summary)
+})
+
+test('latest collection reversion restores prior records in LIFO order', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'frontier-store-revert-'))
+  const store = new FrontierStore(join(root, 'index.json'), 3, 5)
+  await store.mergeRecords([record({ id: 'old', summary: 'original' })])
+  await store.commitCollection([record({ id: 'old', summary: 'changed' }), record({ id: 'new' })], {
+    id: 'batch-1', input: {}, sources: [], enrichments: {},
+  })
+  const reverted = await store.revertLatestCollection('batch-1')
+  assert.deepEqual(reverted.records.map(item => item.id), ['old'])
+  assert.equal(reverted.records[0].summary, 'original')
+  assert.equal(reverted.collections[0].state, 'reverted')
+  assert.equal(reverted.collections[0].reversion.digest.length, 64)
+})
+
+test('collection reversion refuses to orphan later evidence', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'frontier-store-dependent-revert-'))
+  const store = new FrontierStore(join(root, 'index.json'), 3, 5)
+  await store.commitCollection([record({ id: 'new' })], { id: 'batch-1', input: {}, sources: [], enrichments: {} })
+  await store.saveAssessment('new', { status: 'ready_behavioral' })
+  await assert.rejects(store.revertLatestCollection('batch-1'), error => {
+    assert.equal(error.code, 'collection_has_dependents')
+    assert.deepEqual(error.details.recordIds, ['new'])
+    return true
+  })
+  assert.equal((await store.read()).collections[0].state, 'committed')
+})

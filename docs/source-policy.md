@@ -15,6 +15,8 @@ The plugin does not ingest media, SEO summaries, anonymous reposts, generic X se
 
 Every record retains its source id/class, lab, canonical URL, source endpoint, collection time, and any person identity evidence. Ranking never removes these fields. Cross-source duplicates retain the first normalized record and list corroborating source ids.
 
+For arXiv records, the plugin may query Hugging Face Paper Pages for linked public repositories, models, datasets, and Spaces. These community-maintained links are artifact leads, not independent verification. Public GitHub repository roots may be resolved through the official REST API to a full default-branch commit plus license/archive metadata. Mutable stars never contribute to truth or source-authority scores.
+
 Person identities can change. The built-in catalog is conservative and should be re-audited on releases. When a reliable, lab-verifiable public channel does not exist, absence is preferred to a guessed account.
 
 ## Source classes

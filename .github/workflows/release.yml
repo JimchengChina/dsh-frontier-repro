@@ -1,0 +1,36 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run verify
+      - name: Build release tarball
+        shell: bash
+        run: |
+          mkdir -p dist
+          pnpm pack --pack-destination dist
+          version="${GITHUB_REF_NAME#v}"
+          mv "dist/dsh-frontier-repro-${version}.tgz" dist/dsh-frontier-repro.tgz
+          sha256sum dist/dsh-frontier-repro.tgz > dist/dsh-frontier-repro.tgz.sha256
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/dsh-frontier-repro.tgz dist/dsh-frontier-repro.tgz.sha256 --generate-notes --verify-tag

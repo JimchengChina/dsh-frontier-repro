@@ -27,18 +27,23 @@ DSH 生态已经有很强的论文和资讯工具：`dsh-ai4scholar`、`dsh-lite
 
 DeepSeek 创始人和 GLM 核心人员没有被硬塞进默认 X 清单：目前没有足够稳定、可由实验室官网交叉验证的公开个人流时，宁可留空，也不收录同名或搬运账号。可以通过受信任的本地 `sourceFile` 添加，并必须给出 `identityEvidenceUrl`。
 
-## 六个工具
+## 九个工具
 
 | 工具 | 用途 |
 |---|---|
 | `frontier_repro_status` | 查看来源、语料库状态和缺失凭证；不联网 |
 | `frontier_repro_collect` | 刷新指定一手源，去重、落盘并返回可解释排序 |
 | `frontier_repro_search` | 只搜索本地语料库，不联网 |
+| `frontier_repro_revert_collection` | 带冲突/依赖保护地回滚最近一次有效采集 |
 | `frontier_repro_get` | 读取完整来源、实现产物、准备度和运行记录 |
 | `frontier_repro_assess` | 对 exact / scaled / behavioral 模式执行条件门禁 |
+| `frontier_repro_graph` | 输出来源、产物、条件、证据与运行的确定性依赖图 |
 | `frontier_repro_record_result` | 记录实际命令、产物、指标、偏差和结果 |
+| `frontier_repro_manifest` | 导出带 canonical SHA-256 的复现交接清单 |
 
-采集阶段会先剔除实验室人事/商务公告和人员生活动态；排序也不是模型黑箱。返回值逐项显示：信源等级、时效、实现产物、复现关键词、前沿主题和查询相关性。Hugging Face 模型流会读取最近模型的 README，只提取论文、代码、数据和评测链接，不保存全文。
+采集阶段会先剔除实验室人事/商务公告和人员生活动态；排序也不是模型黑箱。返回值逐项显示：信源等级、时效、实现产物、复现关键词、前沿主题和查询相关性。Hugging Face 模型流会读取最近模型的 README，只提取论文、代码、数据和评测链接，不保存全文；arXiv 条目还会从 Hugging Face Paper Pages 补充公开模型、数据集、Space 与代码关系。GitHub 代码会尽力钉到完整 commit SHA，stars 仅作为参考信息。
+
+采集本身使用单一生命周期状态机，批次以原子事务写入并保存有界逆操作。只有最近的有效批次可以 LIFO 回滚；若新增记录已有 assessment/run 依赖，或记录后来发生冲突修改，回滚会明确拒绝。论文到实现的完整映射见 [docs/architecture.md](docs/architecture.md)。
 
 ## 安装
 
@@ -52,6 +57,8 @@ dsh plugin --profile headless add /absolute/path/to/dsh-frontier-repro
 ```
 
 重启对应 profile。默认数据保存在 `$DSH_HOME/frontier-repro/index.json`，文件和目录分别以 `0600` / `0700` 创建。
+
+每个 tag release 会附带验证后的固定名安装包 `dsh-frontier-repro.tgz` 和 SHA-256 文件，插件市场可以直接使用 GitHub Release 包，无需现场源码构建。
 
 ## 典型工作流
 
@@ -89,6 +96,24 @@ dsh plugin --profile headless add /absolute/path/to/dsh-frontier-repro
 
 完成执行后，只有提供实际命令、结果文件/提交、测量指标时，`frontier_repro_record_result` 才接受 `passed`。
 
+此外，assessment 必须给出至少一条量化 rubric，例如：
+
+```json
+[
+  {
+    "id": "accuracy",
+    "description": "在官方测试集达到参考精度下限",
+    "metric": "accuracy",
+    "operator": "gte",
+    "expected": 0.9,
+    "weight": 3,
+    "required": true
+  }
+]
+```
+
+`operator` 支持 `gte`、`lte`、`equal`、`within`。`passed` 还要求同模式 assessment 处于 `ready_*`，且所有 required criterion 通过。
+
 ## X API 条件
 
 设置凭证引用 `X_BEARER_TOKEN`：
@@ -110,9 +135,12 @@ dsh web
     defaultDays: 90
     defaultLimit: 20
     maxRecords: 1000
+    maxCollections: 20
     requestTimeoutMs: 20000
     maxResponseBytes: 5242880
     pageConcurrency: 3
+    githubEnrichLimit: 8
+    githubTokenEnv: GITHUB_TOKEN
     xBearerTokenEnv: X_BEARER_TOKEN
     # storagePath: /absolute/path/index.json
     # sourceFile: /absolute/path/sources.json
@@ -120,7 +148,7 @@ dsh web
     promptOrder: 145
 ```
 
-`sourceFile` 是启动时读取的本地管理员配置，不接受模型在工具参数中传入任意 URL。支持 `feed`、`page`、`official_index`、`sitemap`、`arxiv`、`huggingface_models`、`x_user`；人员来源强制要求姓名、角色和官网身份依据。参见 [sources.example.json](sources.example.json) 与 [docs/source-policy.md](docs/source-policy.md)。
+`sourceFile` 是启动时读取的本地管理员配置，不接受模型在工具参数中传入任意 URL。支持 `feed`、`page`、`official_index`、`sitemap`、`arxiv`、`huggingface_models`、`x_user`；人员来源强制要求姓名、角色和官网身份依据。`GITHUB_TOKEN` 是可选的公开 API 限流增强，不会取代 X 来源必须具备的 X 凭证。参见 [sources.example.json](sources.example.json) 与 [docs/source-policy.md](docs/source-policy.md)。
 
 ## 验证
 
@@ -132,7 +160,7 @@ pnpm run smoke:plugin
 node scripts/smoke.mjs openai-news google-deepmind-news zai-release-notes
 ```
 
-`verify` 包含语法检查、解析器/排序/存储/复现门禁单元测试，以及通过真实 DSH `ToolRuntime` 的装配与卸载测试。`smoke.mjs` 直接验证各来源，`smoke:plugin` 则通过真实工具调用验证“采集 → 落盘 → 排序”；两者都是只读网络冒烟，不会调用 X。
+`verify` 包含语法、解析与增强、指纹、生命周期、事务回滚、证据图、manifest、rubric、存储和复现门禁测试，以及通过真实 DSH `ToolRuntime` 的装配与卸载测试。`smoke.mjs` 直接验证各来源，`smoke:plugin` 则通过真实工具调用验证“采集 → 落盘 → 排序”；两者都是只读网络冒烟，不会调用 X。
 
 ## 已知限制
 
@@ -140,7 +168,9 @@ node scripts/smoke.mjs openai-news google-deepmind-news zai-release-notes
 - OpenAI RSS 可以稳定获取，但正文页面可能拒绝自动客户端；插件保留 RSS 元数据，选中后可让 DSH 的浏览器/网页工具继续核验。
 - arXiv 条目只证明论文存在，不证明结论正确；官方博客也属于发布方自述。评分是发现优先级，不是可信度结论。
 - X API 需要用户自己的凭证、权限和预算；插件不绕过访问控制。
+- GitHub 匿名 API 限流较低；可配置可选 token 或降低 `githubEnrichLimit`。钉住失败会报告，但不会删除原始来源记录。
 - 准备度基于 agent 提交的证据矩阵。插件检查完整性和一致性，不替代人工验证证据内容。
+- manifest 的 integrity 是确定性内容摘要，不是身份签名，也不等于远端大文件校验和。
 - 当前没有后台定时器；可用 DSH 已有的 schedule/cron 能力定期调用 `frontier_repro_collect`，避免重复实现调度平台。
 
 ## License

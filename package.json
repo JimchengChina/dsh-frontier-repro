@@ -1,6 +1,6 @@
 {
   "name": "dsh-frontier-repro",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Evidence-first frontier AI radar and reproducibility gate for DeepSeek Harness",
   "keywords": [
     "deepseek-harness",
@@ -15,6 +15,7 @@
     ".": "./index.js",
     "./core": "./lib/repro.js",
     "./catalog": "./lib/catalog.js",
+    "./manifest": "./lib/manifest.js",
     "./package.json": "./package.json"
   },
   "files": [

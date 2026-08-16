@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/JimchengChina/dsh-frontier-repro/blob/main/docs/reproduction-manifest.schema.json",
+  "title": "Frontier Reproduction Handoff Manifest",
+  "type": "object",
+  "required": ["schema", "version", "record", "plan", "materials", "steps", "products", "byproducts", "evidenceGraphDigest", "sourceCatalogDigest", "integrity"],
+  "properties": {
+    "schema": { "type": "string", "format": "uri" },
+    "version": { "const": 1 },
+    "record": {
+      "type": "object",
+      "required": ["id", "title", "url", "sourceId", "sourceClass", "contentDigest"]
+    },
+    "plan": {
+      "type": "object",
+      "required": ["assessmentId", "target", "mode", "status", "requirements", "environment", "rubric", "rubricDigest", "missingConditions"]
+    },
+    "materials": { "type": "array", "items": { "type": "object", "required": ["kind", "uri"] } },
+    "steps": { "type": "array", "items": { "type": "object", "required": ["id", "state"] } },
+    "products": { "type": "array" },
+    "byproducts": { "type": "array" },
+    "evidenceGraphDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "sourceCatalogDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "integrity": {
+      "type": "object",
+      "required": ["algorithm", "digest"],
+      "properties": {
+        "algorithm": { "const": "sha256" },
+        "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    }
+  },
+  "additionalProperties": false
+}

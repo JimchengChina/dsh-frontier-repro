@@ -50,9 +50,13 @@ test('real ToolRuntime registers the evidence gate and refuses unsupported succe
   const status = valueOf(await call(ctx, 'status', 'frontier_repro_status'))
   assert.equal(status.corpus_records, 1)
   assert.equal(status.credentials.x_api.configured, false)
+  assert.equal(status.credentials.github_api.required, false)
+  assert.equal(status.capabilities['credential:x-api'].available, false)
+  assert.deepEqual(status.sources.find(source => source.id === 'sam-altman-x').blockers.map(item => item.capability), ['credential:x-api'])
 
   const assessed = valueOf(await call(ctx, 'assess', 'frontier_repro_assess', {
     id: 'paper-1', target: 'Match the released eval', mode: 'behavioral', requirements: available('behavioral'),
+    rubric: [{ id: 'accuracy', description: 'Match accuracy', metric: 'accuracy', operator: 'gte', expected: 0.9 }],
   }))
   assert.equal(assessed.assessment.status, 'ready_behavioral')
 
