@@ -61,6 +61,8 @@ dsh plugin --profile headless add /absolute/path/to/dsh-frontier-repro
 
 Restart the selected profile. The default corpus is `$DSH_HOME/frontier-repro/index.json`.
 
+Tagged releases attach a verified package tarball and SHA-256 file. Storefronts can use `https://github.com/JimchengChina/dsh-frontier-repro/releases/latest/download/dsh-frontier-repro.tgz` without running a source build.
+
 ## X access
 
 Set `X_BEARER_TOKEN` in the launch environment or the DSH credentials store. The token is resolved for every collection and never enters config, the corpus, or tool output. Without X API access, the X sources report their exact missing condition and every other source continues.

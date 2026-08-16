@@ -58,6 +58,8 @@ dsh plugin --profile headless add /absolute/path/to/dsh-frontier-repro
 
 重启对应 profile。默认数据保存在 `$DSH_HOME/frontier-repro/index.json`，文件和目录分别以 `0600` / `0700` 创建。
 
+每个 tag release 会附带验证后的固定名安装包 `dsh-frontier-repro.tgz` 和 SHA-256 文件，插件市场可以直接使用 GitHub Release 包，无需现场源码构建。
+
 ## 典型工作流
 
 先说：
