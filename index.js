@@ -12,6 +12,7 @@ import { FrontierStore } from './lib/store.js'
 import { CollectionCoordinator } from './lib/lifecycle.js'
 import { sourceCatalogDigest } from './lib/canonical.js'
 import { buildEvidenceGraph } from './lib/graph.js'
+import { createReproductionManifest } from './lib/manifest.js'
 
 export const name = 'frontier-repro'
 export const inject = ['systemPrompt', 'tools']
@@ -133,7 +134,8 @@ export function apply(ctx, inputConfig = {}) {
         + 'A ready_exact, ready_scaled, or ready_behavioral result means prerequisites are documented; it does not mean the feature was reproduced. '
         + 'Use normal filesystem, shell, web, and evaluation tools to implement in an isolated workspace. Pin artifact versions, begin with the smallest baseline, '
         + 'and do not upgrade scaled or behavioral equivalence to an exact-reproduction claim. Record executed commands, artifact paths, metrics, deviations, '
-        + 'and the honest verdict with frontier_repro_record_result. Never mark a run passed without measurable evaluation evidence. '
+        + 'and the honest verdict with frontier_repro_record_result. Never mark a run passed without measurable evaluation evidence. Use frontier_repro_graph '
+        + 'to inspect missing dependencies and frontier_repro_manifest to hand a frozen plan to an execution system. '
         + 'When X sources are unavailable, report the missing X_BEARER_TOKEN/API access condition instead of scraping X pages.',
     })
   }
@@ -450,6 +452,33 @@ export function apply(ctx, inputConfig = {}) {
         return { ok: true, run }
       } catch (error) {
         return { ok: false, code: 'invalid_run', message: error.message }
+      }
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'frontier_repro_manifest',
+    description: 'Return a canonical SHA-256 reproduction handoff manifest with materials, plan, rubric, products, byproducts, and evidence-graph digest. This is not a signature or execution proof.',
+    parameters: {
+      id: { type: 'string', required: true, description: 'Frontier record id with a saved assessment.' },
+    },
+    output: jsonOutput(),
+    async execute(args) {
+      const data = await store.read()
+      const found = requireRecord(data, args.id)
+      if (!found.ok) return found
+      const assessment = data.assessments[args.id]
+      if (assessment === undefined) {
+        return { ok: false, code: 'assessment_required', message: 'Create and save a reproduction assessment before exporting a manifest.' }
+      }
+      return {
+        ok: true,
+        manifest: createReproductionManifest({
+          record: found.record,
+          assessment,
+          runs: data.runs[args.id] ?? [],
+          sourceCatalogDigest: catalogDigest,
+        }),
       }
     },
   }))

@@ -15,6 +15,7 @@
     ".": "./index.js",
     "./core": "./lib/repro.js",
     "./catalog": "./lib/catalog.js",
+    "./manifest": "./lib/manifest.js",
     "./package.json": "./package.json"
   },
   "files": [
