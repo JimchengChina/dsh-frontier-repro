@@ -8,7 +8,7 @@ import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import * as FrontierRepro from '../index.js'
 import { FrontierStore } from '../lib/store.js'
-import { MODES } from '../lib/repro.js'
+import { CLAIM_MODES, MODES } from '../lib/repro.js'
 
 const signal = new AbortController().signal
 
@@ -37,6 +37,12 @@ function available(mode) {
   }]))
 }
 
+function availableClaims(mode) {
+  return Object.fromEntries(CLAIM_MODES[mode].map(key => [key, {
+    state: 'available', evidence: [`checked:${key}`], note: 'verified for test',
+  }]))
+}
+
 test('real ToolRuntime registers the evidence gate and refuses unsupported success claims', async () => {
   const { ctx, storagePath } = await setup()
   const store = new FrontierStore(storagePath)
@@ -59,6 +65,61 @@ test('real ToolRuntime registers the evidence gate and refuses unsupported succe
   assert.equal(status.source_health_alerts, 0)
   assert.equal(status.sources.find(source => source.id === 'openai-news').health.lastCount, 5)
   assert.deepEqual(status.sources.find(source => source.id === 'sam-altman-x').blockers.map(item => item.capability), ['credential:x-api'])
+
+  const events = valueOf(await call(ctx, 'events', 'frontier_repro_events', { limit: 5 }))
+  assert.equal(events.returned, 1)
+  const eventId = events.events[0].id
+  const watched = valueOf(await call(ctx, 'watch', 'frontier_repro_watch', { action: 'add', event_id: eventId }))
+  assert.equal(watched.event.watchlisted, true)
+
+  const claimAssessment = valueOf(await call(ctx, 'claim-assess', 'frontier_repro_assess_claims', {
+    id: eventId,
+    target_type: 'event',
+    target: 'Match the public evaluation on a toy slice',
+    mode: 'from_scratch_replication',
+    equivalence: 'toy',
+    requirements: availableClaims('from_scratch_replication'),
+    claims: [{
+      id: 'accuracy', statement: 'Match accuracy', metric: 'accuracy', operator: 'gte', expected: 0.9,
+      evidence: ['https://arxiv.org/abs/2608.00001'],
+    }],
+  }))
+  assert.equal(claimAssessment.assessment.status, 'ready')
+
+  const attempt = valueOf(await call(ctx, 'attempt', 'frontier_repro_record_attempt', {
+    id: eventId,
+    target_type: 'event',
+    mode: 'from_scratch_replication',
+    equivalence: 'toy',
+    verdict: 'passed',
+    commands: ['node eval.mjs'],
+    artifacts: ['results/eval.json'],
+    metrics: { accuracy: 0.91 },
+    claim_results: [{ claimId: 'accuracy', actual: 0.91, passed: true, evidence: ['results/eval.json'] }],
+    resources: { cpuModel: 'test CPU', cpuCount: 2, durationSeconds: 1, costUsd: 0, dataScale: 'fixture', relativeToPaper: 0.001 },
+    verifier: { kind: 'benchmark', identity: 'fixture-eval', verdict: 'passed', evidence: ['results/eval.json'] },
+  }))
+  assert.equal(attempt.attempt.outcome, 'toy_only')
+  assert.equal(attempt.attempt.attemptNumber, 1)
+
+  const bundle = valueOf(await call(ctx, 'bundle', 'frontier_repro_bundle', { event_id: eventId }))
+  assert.equal(bundle.attempts.length, 1)
+  const trackio = valueOf(await call(ctx, 'trackio', 'frontier_repro_trackio_scaffold', { event_id: eventId }))
+  assert.equal(JSON.parse(trackio.scaffold.files['attempts.json']).length, 1)
+
+  const currentRecord = (await store.read()).records.find(record => record.id === 'paper-1')
+  await store.mergeRecords([{ ...currentRecord, summary: 'A materially revised method', lastSeenAt: new Date(Date.now() + 1_000).toISOString() }])
+  const changedEvents = valueOf(await call(ctx, 'events-changed', 'frontier_repro_events', { changed_only: true }))
+  assert.equal(changedEvents.returned, 1)
+  assert.equal(changedEvents.events[0].version, 2)
+  const staleAttempt = valueOf(await call(ctx, 'attempt-stale', 'frontier_repro_record_attempt', {
+    id: eventId, target_type: 'event', assessment_id: claimAssessment.assessment.id,
+    mode: 'from_scratch_replication', equivalence: 'toy', verdict: 'blocked',
+  }))
+  assert.equal(staleAttempt.code, 'assessment_stale')
+  valueOf(await call(ctx, 'watch-ack', 'frontier_repro_watch', { action: 'acknowledge', event_id: eventId }))
+  const acknowledged = valueOf(await call(ctx, 'events-acknowledged', 'frontier_repro_events', { changed_only: true }))
+  assert.equal(acknowledged.returned, 0)
 
   const assessed = valueOf(await call(ctx, 'assess', 'frontier_repro_assess', {
     id: 'paper-1', target: 'Match the released eval', mode: 'behavioral', requirements: available('behavioral'),

@@ -2,7 +2,7 @@
 
 An evidence-first frontier AI radar and reproduction gate for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness).
 
-This is not another generic news reader, arXiv search engine, or paper summarizer. It covers the missing path from a curated primary-source signal to an auditable reproduction decision: exact, scaled, behavioral, blocked, or insufficiently evidenced. Executed attempts are recorded separately and a `passed` verdict requires commands, artifacts, measured metrics, and a passing saved rubric.
+This is not another generic news reader, arXiv search engine, or paper summarizer. It covers the missing path from a curated primary-source signal to a versioned release evidence bundle and then to an auditable reproduction decision. Executed attempts are retained—including failures and negative results—and a successful exact/scaled claim requires commands, artifacts, measured claim results, and independent verifier evidence.
 
 [中文说明](README.zh-CN.md)
 
@@ -19,6 +19,12 @@ Existing DSH plugins already cover literature discovery/full text (`dsh-ai4schol
 - Hugging Face paper-to-artifact expansion and immutable GitHub commit evidence;
 - immutable arXiv versions and Hugging Face model/dataset repository SHAs;
 - persistent source health with volume, structure, failure-streak, and staleness alerts;
+- conservative lab-scoped clustering into Frontier Release Evidence Bundles, with corroboration and explicit missing evidence;
+- capability/evaluation/license diffs, `firstSeenAt` / `lastSeenAt` / `supersedesDigest` version chains, and substantive-only watchlists;
+- a first-party GitHub organization adapter for new repositories, releases, tags, immutable commits, and release-asset digests;
+- claim-level `execute_existing`, `partial_reimplementation`, and `from_scratch_replication` protocols;
+- preserved multi-attempt resource records (GPU/CPU/VRAM/time/cost/data scale/job URL) and mandatory verifiers for success;
+- a file-only Hugging Face Trackio logbook scaffold instead of a duplicate experiment UI;
 - serialized, journaled collection batches with guarded LIFO rollback;
 - an explicit evidence dependency graph and canonical reproduction handoff manifest.
 
@@ -31,7 +37,7 @@ Corporate/personnel announcements, placeholder titles, missing-date records from
 - arXiv categories `cs.AI`, `cs.CL`, `cs.LG`, `cs.CV`, `cs.RO`, and `cs.SE` through the official Atom API.
 - OpenAI News; Anthropic Newsroom, Research, and Engineering; Google DeepMind News; MiniMax Research; Kimi Blog; DeepSeek API News and Transparency; and Z.ai model release notes.
 - NVIDIA Technical Blog, AMD ROCm Blog, and the filtered Intel Artificial Intelligence News feed for training, inference, accelerator, compiler, and benchmark signals.
-- Verified DeepSeek, Moonshot AI, MiniMax, and Z.ai Hugging Face organizations for model artifacts.
+- Verified DeepSeek, Moonshot AI, MiniMax, and Z.ai Hugging Face organizations for model artifacts, plus the official DeepSeek GitHub organization for repository/release/tag changes.
 - Sam Altman's blog and Jack Clark's Import AI.
 - Sam Altman, Dario Amodei, and Demis Hassabis on X, through X API v2 only.
 
@@ -43,13 +49,19 @@ No unverified DeepSeek-founder or GLM-person account is preloaded. Add a custom 
 |---|---|
 | `frontier_repro_status` | Source, corpus, credential, and persisted source-health status without network access |
 | `frontier_repro_collect` | Refresh curated sources, persist, dedupe, and rank signals |
+| `frontier_repro_events` | List versioned cross-source release evidence bundles and substantive watch changes |
+| `frontier_repro_bundle` | Inspect one bundle, predecessor chain, source records, claims, and all attempts |
+| `frontier_repro_watch` | Add/remove/acknowledge release watches by substantive digest |
 | `frontier_repro_search` | Search the local corpus only |
 | `frontier_repro_revert_collection` | Safely undo the latest live collection batch |
 | `frontier_repro_get` | Full provenance, artifacts, assessment, and run history |
 | `frontier_repro_assess` | Evidence gate for exact/scaled/behavioral reproduction |
+| `frontier_repro_assess_claims` | Claim-level gate for execute/partial/from-scratch modes and exact/scaled/toy equivalence |
 | `frontier_repro_graph` | Deterministic source/artifact/requirement/run dependency graph |
 | `frontier_repro_record_result` | Persist executed commands, artifacts, metrics, deviations, and verdict |
+| `frontier_repro_record_attempt` | Preserve one claim-level attempt, resources, verifier, and honest outcome |
 | `frontier_repro_manifest` | Canonical reproduction handoff manifest with SHA-256 integrity |
+| `frontier_repro_trackio_scaffold` | Export a local-first Trackio logbook scaffold without executing or publishing |
 
 ## Install
 
@@ -94,7 +106,15 @@ No HTML scraping fallback is used.
     promptOrder: 145
 ```
 
-`sourceFile` is trusted local administrator configuration. Tool arguments never accept arbitrary source URLs. Custom sources may declare `allowCategories`, `denyCategories`, `requirePublishedAt`, `boilerplateTitles`, and `healthStaleAfterDays`. Person sources require a name, role, and first-party identity evidence. `GITHUB_TOKEN` is optional and only raises public API limits; X API access remains explicitly required for X sources. See [sources.example.json](sources.example.json) and [docs/source-policy.md](docs/source-policy.md).
+`sourceFile` is trusted local administrator configuration. Tool arguments never accept arbitrary source URLs. Custom sources may declare `allowCategories`, `denyCategories`, `requirePublishedAt`, `boilerplateTitles`, and `healthStaleAfterDays`. A `github_org` source declares an organization plus bounded `releaseRepoLimit` / `releasesPerRepo`; person sources require a name, role, and first-party identity evidence. `GITHUB_TOKEN` is optional and only raises public API limits; X API access remains explicitly required for X sources. See [sources.example.json](sources.example.json) and [docs/source-policy.md](docs/source-policy.md).
+
+## P1 workflow: release bundle to verified attempt
+
+1. Collect first-party signals, then select a release with `frontier_repro_events` / `frontier_repro_bundle`.
+2. Watch it. Later collections set `changed_since_watch` only when capability claims, evaluation evidence, licenses, or immutable artifacts changed; acknowledge after review.
+3. Define independently testable claims with primary evidence and choose `execute_existing`, `partial_reimplementation`, or `from_scratch_replication`, plus `exact`, `scaled`, or `toy` equivalence.
+4. Record every attempt. `passed` requires all required claim metrics and a passing verifier with identity/evidence. A toy pass is always stored as `toy_only`, never `reproduced`.
+5. Export the Trackio scaffold to visualize the preserved attempts locally or, only when intended, in a Hugging Face Space. The scaffold does not execute the experiment or change verdicts.
 
 ## Verification
 
@@ -105,7 +125,7 @@ pnpm run smoke:plugin
 node scripts/smoke.mjs openai-news google-deepmind-news zai-release-notes
 ```
 
-The tests cover parsing, enrichment, digests, lifecycle serialization, transaction rollback, evidence topology, manifests, rubric grading, storage, and registration/disposal through the real DSH `ToolRuntime`. `smoke.mjs` exercises source adapters directly; `smoke:plugin` runs collection through the real tool runtime. Both perform read-only requests and never call X.
+The tests cover parsing, enrichment, event clustering/versioning, GitHub organization releases, watch rollback safety, claim grading, multi-attempt/verifier enforcement, Trackio export, digests, lifecycle serialization, transaction rollback, evidence topology, manifests, storage, and registration/disposal through the real DSH `ToolRuntime`. `smoke.mjs` exercises source adapters directly; `smoke:plugin` runs collection through the real tool runtime. Both perform read-only requests and never call X.
 
 ## Limitations
 
@@ -115,6 +135,8 @@ The tests cover parsing, enrichment, digests, lifecycle serialization, transacti
 - A primary source proves provenance, not correctness. Ranking is discovery priority, not a truth score.
 - X requires the user's own API entitlement and budget; the plugin does not bypass access controls.
 - Anonymous GitHub API requests have low rate limits. Configure the optional token or reduce `githubEnrichLimit`; Hugging Face pinning can be bounded with `huggingFaceEnrichLimit`. A pinning failure is reported and does not erase the source record.
+- Release clustering is deliberately conservative and lab-scoped. Unrecognized model names remain one-record bundles rather than being merged by vague semantic similarity.
+- A Trackio scaffold is an export. The plugin does not install Python packages, run jobs, upload to Spaces, or treat dashboard logging as verification.
 - The gate checks evidence completeness and consistency, not whether every submitted evidence statement is true.
 - Manifest integrity is a deterministic content digest, not an identity signature or remote artifact checksum.
 - Scheduling is deliberately left to existing DSH schedule/cron plugins.

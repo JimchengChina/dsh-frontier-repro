@@ -25,6 +25,13 @@ const result = await ctx.tools.execute({
 })
 
 if (result.isError) throw result.error
-console.log(JSON.stringify(result.value, null, 2))
-if (result.value.ok !== true || result.value.collected < 1) process.exitCode = 1
+const events = await ctx.tools.execute({
+  callId: 'frontier-repro-events-smoke',
+  name: 'frontier_repro_events',
+  arguments: { limit: 5 },
+  signal: new AbortController().signal,
+})
+if (events.isError) throw events.error
+console.log(JSON.stringify({ collection: result.value, events: events.value }, null, 2))
+if (result.value.ok !== true || result.value.collected < 1 || events.value.returned < 1) process.exitCode = 1
 await ctx.root.fiber.dispose()

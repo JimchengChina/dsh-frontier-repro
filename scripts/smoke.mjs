@@ -14,7 +14,7 @@ const result = await collectAll(selected, {
   timeoutMs: 30_000,
   maxBytes: 8 * 1024 * 1024,
   pageConcurrency: 2,
-  userAgent: 'dsh-frontier-repro-smoke/0.2.1',
+  userAgent: 'dsh-frontier-repro-smoke/0.3.0',
 })
 
 console.log(JSON.stringify({

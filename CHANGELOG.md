@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.0
+
+- Cluster lab-scoped model releases into versioned Frontier Release Evidence Bundles spanning official posts, system cards/papers, code, models, datasets, evaluations, and verified person signals.
+- Add corroboration, missing-evidence slots, reproduction-level candidates, capability/evaluation/license diffs, and `firstSeenAt` / `lastSeenAt` / `supersedesDigest` version chains.
+- Add substantive-digest watchlists with explicit acknowledgement and rollback dependency protection.
+- Add a GitHub organization adapter for public repositories, Releases, Tags, pinned commits, licenses, and release-asset digests; include the official DeepSeek organization.
+- Add claim-level `execute_existing`, `partial_reimplementation`, and `from_scratch_replication` assessments at exact/scaled/toy equivalence.
+- Preserve up to 50 attempts per target with claim results, verifier evidence, GPU/CPU/VRAM/time/cost/data-scale/job metadata, failures, blockers, and negative results.
+- Enforce that a toy pass remains `toy_only`; exact/scaled success requires every required claim metric and a passing identified verifier.
+- Export a file-only, local-first Hugging Face Trackio logbook scaffold containing the frozen bundle, assessments, and all attempts.
+- Migrate v1/v2 stores to schema v3 while retaining existing record assessments and runs.
+
 ## 0.2.1
 
 - Add Anthropic Research, Kimi Blog, MiniMax Research, DeepSeek Transparency, NVIDIA Technical Blog, AMD ROCm Blog, Intel AI News, and verified Moonshot/MiniMax Hugging Face model sources.
