@@ -4,8 +4,8 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import test from 'node:test'
 import { rankRecords } from '../lib/rank.js'
-import { FrontierStore } from '../lib/store.js'
-import { isFrontierItem } from '../lib/collector.js'
+import { FrontierStore, sourceHealthView } from '../lib/store.js'
+import { applySourceQuality, isFrontierItem, normalizeItem } from '../lib/collector.js'
 
 function record(overrides = {}) {
   return {
@@ -43,6 +43,39 @@ test('frontier admission removes corporate and personal noise before persistence
   assert.equal(isFrontierItem({ sourceClass: 'person_blog' }, {
     title: 'Family photo', summary: 'A personal update.', categories: [], url: 'https://person.example/family', discoveredLinks: [],
   }), false)
+})
+
+test('source contracts reject boilerplate, missing dates, and denied categories before persistence', () => {
+  const quality = applySourceQuality({
+    requirePublishedAt: true,
+    denyCategories: ['Company'],
+    boilerplateTitles: ['Generic Blog'],
+  }, [
+    { title: '-', publishedAt: '2026-08-01', categories: [] },
+    { title: 'Generic Blog', publishedAt: '2026-08-01', categories: [] },
+    { title: 'Model release', categories: [] },
+    { title: 'Executive update', publishedAt: '2026-08-01', categories: ['Company'] },
+    { title: 'New reasoning model', publishedAt: '2026-08-01', categories: ['Research'] },
+  ])
+  assert.deepEqual(quality.items.map(item => item.title), ['New reasoning model'])
+  assert.deepEqual(quality.rejectedReasons, {
+    invalid_title: 1, boilerplate_title: 1, missing_published_at: 1, denied_category: 1,
+  })
+})
+
+test('arXiv stable identity retains version-pinned paper artifacts', () => {
+  const normalized = normalizeItem({
+    id: 'arxiv', name: 'arXiv', sourceClass: 'paper', type: 'arxiv', lab: 'Research', url: 'https://export.arxiv.org/api/query',
+  }, {
+    title: 'Versioned paper', url: 'https://arxiv.org/abs/2608.12345v2', arxivId: '2608.12345',
+    arxivVersionedId: '2608.12345v2', arxivVersion: 'v2', discoveredLinks: ['https://arxiv.org/pdf/2608.12345v2'],
+    authors: [], categories: [],
+  }, Date.UTC(2026, 7, 17))
+  assert.equal(normalized.url, 'https://arxiv.org/abs/2608.12345')
+  assert.equal(normalized.arxivVersion, 'v2')
+  assert.deepEqual(normalized.artifacts[0], {
+    kind: 'paper', url: 'https://arxiv.org/pdf/2608.12345v2', revision: 'v2', immutableUrl: 'https://arxiv.org/pdf/2608.12345v2',
+  })
 })
 
 test('store merges records atomically and retains assessments and runs', async () => {
@@ -119,4 +152,25 @@ test('collection reversion refuses to orphan later evidence', async () => {
     return true
   })
   assert.equal((await store.read()).collections[0].state, 'committed')
+})
+
+test('source health tracks drift, failure streaks, and dynamic staleness', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'frontier-store-health-'))
+  const store = new FrontierStore(join(root, 'index.json'), 3, 8)
+  await store.commitCollection([], {
+    id: 'health-1', finishedAt: '2026-08-01T00:00:00Z', input: {}, enrichments: {},
+    sources: [{ id: 'lab', ok: true, count: 10, rawCount: 12, rejectedCount: 2, newestItemAt: '2026-08-01T00:00:00Z', structureFingerprint: 'a', healthStaleAfterDays: 5 }],
+  })
+  await store.commitCollection([], {
+    id: 'health-2', finishedAt: '2026-08-02T00:00:00Z', input: {}, enrichments: {},
+    sources: [{ id: 'lab', ok: true, count: 3, rawCount: 8, rejectedCount: 5, newestItemAt: '2026-08-02T00:00:00Z', structureFingerprint: 'b', healthStaleAfterDays: 5 }],
+  })
+  await store.commitCollection([], { id: 'health-3', finishedAt: '2026-08-03T00:00:00Z', input: {}, enrichments: {}, sources: [{ id: 'lab', ok: false, count: 0 }] })
+  await store.commitCollection([], { id: 'health-4', finishedAt: '2026-08-04T00:00:00Z', input: {}, enrichments: {}, sources: [{ id: 'lab', ok: false, count: 0, error: { code: 'source_failed', message: 'HTTP 500' } }] })
+  const health = (await store.read()).sourceHealth.lab
+  assert.equal(health.consecutiveFailures, 2)
+  assert.equal(health.lastCount, 3)
+  assert.equal(health.alerts.some(alert => alert.code === 'consecutive_failures'), true)
+  assert.equal(health.lastError.code, 'source_failed')
+  assert.equal(sourceHealthView(health, Date.parse('2026-08-10T00:00:00Z')).stale, true)
 })

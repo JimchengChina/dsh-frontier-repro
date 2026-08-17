@@ -12,6 +12,7 @@ This plugin treats a frontier-research workflow as a dynamically composed system
 | Fiber target and inertia | Collection has an explicit idle/collecting transition and does not interleave two mutation lifecycles. | Concurrent calls are serialized and each committed batch has one start/end state. |
 | Committed view | A reproduction manifest freezes the record, artifacts, assessment, and rubric it was built from. | The manifest has a canonical SHA-256 digest and is unaffected by later collection. |
 | Declarative reconciliation | Stable source ids and a catalog digest identify the desired source configuration. | A status or batch can state exactly which catalog version produced it. |
+| Temporal observation | Source health carries the latest successful observation plus drift/failure history across collection fibers. | Status can distinguish a quiet source from a broken or structurally changed adapter without fetching the network. |
 | Dependency topology | Evidence is exposed as a graph of source, record, artifact, requirement, and run nodes. | Missing or unpinned dependencies are visible instead of hidden in prose. |
 
 The paper also identifies a system boundary: an inverse supplied by a component is an obligation that the runtime cannot prove. The plugin therefore makes only its own JSON corpus mutations revertible. Network requests, upstream posts, downloaded model weights, arbitrary shell commands, and external experiment trackers remain outside that boundary.

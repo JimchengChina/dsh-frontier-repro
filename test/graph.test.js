@@ -28,7 +28,7 @@ test('evidence graph is deterministic and surfaces spatial blockers', () => {
   const first = buildEvidenceGraph(input())
   const second = buildEvidenceGraph(input())
   assert.equal(first.digest, second.digest)
-  assert.deepEqual(first.issues.map(issue => issue.code).sort(), ['gated_artifact', 'requirement_unknown', 'unpinned_code'])
+  assert.deepEqual(first.issues.map(issue => issue.code).sort(), ['gated_artifact', 'requirement_unknown', 'unpinned_code', 'unpinned_model'])
   assert.equal(first.edges.some(edge => edge.relation === 'supported_by'), true)
   assert.equal(first.edges.some(edge => edge.relation === 'produced'), true)
 })

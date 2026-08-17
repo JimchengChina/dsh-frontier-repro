@@ -8,7 +8,7 @@ import { mergeSources } from './lib/catalog.js'
 import { collectAll, filterRecords } from './lib/collector.js'
 import { rankRecords } from './lib/rank.js'
 import { assessReproduction, recordRun } from './lib/repro.js'
-import { FrontierStore } from './lib/store.js'
+import { FrontierStore, sourceHealthView } from './lib/store.js'
 import { CollectionCoordinator } from './lib/lifecycle.js'
 import { sourceCatalogDigest } from './lib/canonical.js'
 import { buildEvidenceGraph } from './lib/graph.js'
@@ -31,6 +31,7 @@ export const Config = z.object({
   maxResponseBytes: z.natural().min(1).default(5 * 1024 * 1024),
   pageConcurrency: z.natural().min(1).default(3),
   githubEnrichLimit: z.natural().default(8),
+  huggingFaceEnrichLimit: z.natural().default(20),
   promptGuidance: z.boolean().default(true),
   promptOrder: z.number().default(145),
 })
@@ -114,6 +115,7 @@ export function apply(ctx, inputConfig = {}) {
     maxResponseBytes: inputConfig.maxResponseBytes ?? 5 * 1024 * 1024,
     pageConcurrency: inputConfig.pageConcurrency ?? 3,
     githubEnrichLimit: inputConfig.githubEnrichLimit ?? 8,
+    huggingFaceEnrichLimit: inputConfig.huggingFaceEnrichLimit ?? 20,
     promptGuidance: inputConfig.promptGuidance ?? true,
     promptOrder: inputConfig.promptOrder ?? 145,
   }
@@ -174,6 +176,9 @@ export function apply(ctx, inputConfig = {}) {
           finished_at: data.collections.at(-1).finishedAt,
         } }),
         updated_at: data.updatedAt,
+        source_health_alerts: Object.values(data.sourceHealth)
+          .map(health => sourceHealthView(health).alerts.length)
+          .reduce((sum, count) => sum + count, 0),
         source_catalog_digest: catalogDigest,
         collection: collectionCoordinator.snapshot(),
         credentials: {
@@ -198,6 +203,7 @@ export function apply(ctx, inputConfig = {}) {
             capability,
             condition: capabilities[capability]?.missingCondition ?? `Provide capability ${capability}.`,
           })),
+          ...(data.sourceHealth[source.id] === undefined ? {} : { health: sourceHealthView(data.sourceHealth[source.id]) }),
           ...(source.identityEvidenceUrl === undefined ? {} : { identity_evidence_url: source.identityEvidenceUrl }),
           ...(source.verifiedAt === undefined ? {} : { identity_verified_at: source.verifiedAt }),
         })),
@@ -237,10 +243,12 @@ export function apply(ctx, inputConfig = {}) {
           maxBytes: config.maxResponseBytes,
           pageConcurrency: config.pageConcurrency,
           githubEnrichLimit: config.githubEnrichLimit,
+          huggingFaceEnrichLimit: config.huggingFaceEnrichLimit,
           githubToken,
-          userAgent: 'dsh-frontier-repro/0.2 (+https://github.com/JimchengChina/dsh-frontier-repro)',
+          userAgent: 'dsh-frontier-repro/0.2.1 (+https://github.com/JimchengChina/dsh-frontier-repro)',
         })
         const partial = collected.sources.some(source => !source.ok || source.warnings.length > 0)
+          || Object.values(collected.enrichments).some(report => report.warnings.length > 0)
         await store.commitCollection(collected.records, {
           ...transition,
           finishedAt: new Date().toISOString(),

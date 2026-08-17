@@ -20,8 +20,9 @@ DSH 生态已经有很强的论文和资讯工具：`dsh-ai4scholar`、`dsh-lite
 ## 默认一手来源
 
 - arXiv：`cs.AI`、`cs.CL`、`cs.LG`、`cs.CV`、`cs.RO`、`cs.SE`，使用官方 Atom API。
-- 实验室官网：OpenAI News RSS、Anthropic Newsroom / Engineering、Google DeepMind News RSS、DeepSeek API News、Z.ai 模型发布记录；Z.ai 博客当前没有可发现的官方索引，模型页仍会保留博客直链作为复现产物线索。
-- 官方复现产物：DeepSeek 和 Z.ai 的已验证 Hugging Face 组织模型流。
+- 实验室官网：OpenAI News，Anthropic Newsroom / Research / Engineering，Google DeepMind News，MiniMax Research，Kimi Blog，DeepSeek API News / Transparency，以及 Z.ai 模型发布记录。
+- 硬件与系统：NVIDIA Technical Blog、AMD ROCm Blog、经过类别与技术相关性过滤的 Intel Artificial Intelligence News，用于捕捉训练、推理、加速器、编译器和基准更新。
+- 官方复现产物：DeepSeek、Moonshot AI、MiniMax 和 Z.ai 的已验证 Hugging Face 组织模型流。
 - 核心人员博客：Sam Altman 个人博客、Anthropic 联合创始人 Jack Clark 的 Import AI。
 - 核心人员 X：Sam Altman、Dario Amodei、Demis Hassabis。只走 X API v2；无凭证时明确报告缺失条件，绝不退化成网页抓取。
 
@@ -41,7 +42,9 @@ DeepSeek 创始人和 GLM 核心人员没有被硬塞进默认 X 清单：目前
 | `frontier_repro_record_result` | 记录实际命令、产物、指标、偏差和结果 |
 | `frontier_repro_manifest` | 导出带 canonical SHA-256 的复现交接清单 |
 
-采集阶段会先剔除实验室人事/商务公告和人员生活动态；排序也不是模型黑箱。返回值逐项显示：信源等级、时效、实现产物、复现关键词、前沿主题和查询相关性。Hugging Face 模型流会读取最近模型的 README，只提取论文、代码、数据和评测链接，不保存全文；arXiv 条目还会从 Hugging Face Paper Pages 补充公开模型、数据集、Space 与代码关系。GitHub 代码会尽力钉到完整 commit SHA，stars 仅作为参考信息。
+采集阶段会先剔除实验室人事/商务公告、占位标题、要求日期却缺失日期的记录和人员生活动态；每个来源还可配置类别允许/拒绝清单和已知模板标题。排序也不是模型黑箱。返回值逐项显示：信源等级、时效、实现产物、复现关键词、前沿主题和查询相关性。Hugging Face 模型流会读取最近模型的 README，只提取论文、代码、数据和评测链接，不保存全文；arXiv 条目同时保留稳定论文 id 与实际观测到的 `vN`。GitHub 代码、公开 Hugging Face 模型和数据集会尽力钉到完整 SHA，stars 等可变指标仅作为参考。
+
+每次采集还会持久化 `source_health`：最近尝试/成功时间、最新有效内容、数量突降、页面结构指纹变化、连续失败、陈旧状态和最近错误。它用于发现适配器或上游页面漂移，不代表对发布内容真实性作判断。
 
 采集本身使用单一生命周期状态机，批次以原子事务写入并保存有界逆操作。只有最近的有效批次可以 LIFO 回滚；若新增记录已有 assessment/run 依赖，或记录后来发生冲突修改，回滚会明确拒绝。论文到实现的完整映射见 [docs/architecture.md](docs/architecture.md)。
 
@@ -140,6 +143,7 @@ dsh web
     maxResponseBytes: 5242880
     pageConcurrency: 3
     githubEnrichLimit: 8
+    huggingFaceEnrichLimit: 20
     githubTokenEnv: GITHUB_TOKEN
     xBearerTokenEnv: X_BEARER_TOKEN
     # storagePath: /absolute/path/index.json
@@ -148,7 +152,7 @@ dsh web
     promptOrder: 145
 ```
 
-`sourceFile` 是启动时读取的本地管理员配置，不接受模型在工具参数中传入任意 URL。支持 `feed`、`page`、`official_index`、`sitemap`、`arxiv`、`huggingface_models`、`x_user`；人员来源强制要求姓名、角色和官网身份依据。`GITHUB_TOKEN` 是可选的公开 API 限流增强，不会取代 X 来源必须具备的 X 凭证。参见 [sources.example.json](sources.example.json) 与 [docs/source-policy.md](docs/source-policy.md)。
+`sourceFile` 是启动时读取的本地管理员配置，不接受模型在工具参数中传入任意 URL。支持 `feed`、`page`、`official_index`、`dated_index`、`model_index`、`sitemap`、`arxiv`、`huggingface_models`、`x_user`；可选质量字段包括 `allowCategories`、`denyCategories`、`requirePublishedAt`、`boilerplateTitles` 和 `healthStaleAfterDays`。人员来源强制要求姓名、角色和官网身份依据。`GITHUB_TOKEN` 是可选的公开 API 限流增强，不会取代 X 来源必须具备的 X 凭证。参见 [sources.example.json](sources.example.json) 与 [docs/source-policy.md](docs/source-policy.md)。
 
 ## 验证
 
@@ -165,10 +169,11 @@ node scripts/smoke.mjs openai-news google-deepmind-news zai-release-notes
 ## 已知限制
 
 - 官网结构会变化。各来源独立失败，成功结果仍会保存；失败和页面级警告会原样列出。
+- 来源健康告警只表示抓取漂移、数量异常或内容陈旧，不等于上游项目失效或发布内容不可信。
 - OpenAI RSS 可以稳定获取，但正文页面可能拒绝自动客户端；插件保留 RSS 元数据，选中后可让 DSH 的浏览器/网页工具继续核验。
 - arXiv 条目只证明论文存在，不证明结论正确；官方博客也属于发布方自述。评分是发现优先级，不是可信度结论。
 - X API 需要用户自己的凭证、权限和预算；插件不绕过访问控制。
-- GitHub 匿名 API 限流较低；可配置可选 token 或降低 `githubEnrichLimit`。钉住失败会报告，但不会删除原始来源记录。
+- GitHub 匿名 API 限流较低；可配置可选 token 或降低 `githubEnrichLimit`，Hugging Face 固定数量可用 `huggingFaceEnrichLimit` 控制。钉住失败会报告，但不会删除原始来源记录。
 - 准备度基于 agent 提交的证据矩阵。插件检查完整性和一致性，不替代人工验证证据内容。
 - manifest 的 integrity 是确定性内容摘要，不是身份签名，也不等于远端大文件校验和。
 - 当前没有后台定时器；可用 DSH 已有的 schedule/cron 能力定期调用 `frontier_repro_collect`，避免重复实现调度平台。

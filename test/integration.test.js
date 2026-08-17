@@ -46,12 +46,18 @@ test('real ToolRuntime registers the evidence gate and refuses unsupported succe
     lab: 'Independent research', summary: 'A method', categories: ['cs.AI'], authors: [], artifacts: [],
     provenance: { canonicalUrl: 'https://arxiv.org/abs/2608.00001' }, firstSeenAt: new Date().toISOString(), lastSeenAt: new Date().toISOString(),
   }])
+  await store.commitCollection([], {
+    id: 'health-observation', finishedAt: new Date().toISOString(), input: {}, enrichments: {},
+    sources: [{ id: 'openai-news', ok: true, count: 5, rawCount: 8, rejectedCount: 3, newestItemAt: new Date().toISOString(), structureFingerprint: 'fixture', healthStaleAfterDays: 45 }],
+  })
 
   const status = valueOf(await call(ctx, 'status', 'frontier_repro_status'))
   assert.equal(status.corpus_records, 1)
   assert.equal(status.credentials.x_api.configured, false)
   assert.equal(status.credentials.github_api.required, false)
   assert.equal(status.capabilities['credential:x-api'].available, false)
+  assert.equal(status.source_health_alerts, 0)
+  assert.equal(status.sources.find(source => source.id === 'openai-news').health.lastCount, 5)
   assert.deepEqual(status.sources.find(source => source.id === 'sam-altman-x').blockers.map(item => item.capability), ['credential:x-api'])
 
   const assessed = valueOf(await call(ctx, 'assess', 'frontier_repro_assess', {

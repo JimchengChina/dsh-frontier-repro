@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { parseArxiv, parseFeed, parseIndexLinks, parseOfficialPage, parseSitemap } from '../lib/parse.js'
+import {
+  parseArxiv,
+  parseDatedIndex,
+  parseFeed,
+  parseHuggingFaceModels,
+  parseIndexLinks,
+  parseModelIndex,
+  parseOfficialPage,
+  parseSitemap,
+} from '../lib/parse.js'
 
 test('RSS parsing preserves provenance fields and discovers artifact links', () => {
   const source = { url: 'https://lab.example/feed.xml', maxItems: 5 }
@@ -26,8 +35,55 @@ test('arXiv parsing strips version suffix for stable identity', () => {
     <link href="https://arxiv.org/pdf/2608.12345v2" type="application/pdf"/>
     </entry></feed>`, source)
   assert.equal(items[0].arxivId, '2608.12345')
+  assert.equal(items[0].arxivVersionedId, '2608.12345v2')
+  assert.equal(items[0].arxivVersion, 'v2')
   assert.deepEqual(items[0].authors, ['A. Researcher'])
   assert.deepEqual(items[0].categories, ['cs.AI'])
+})
+
+test('dated and model indexes preserve card titles, dates, and first-party evidence links', () => {
+  const dated = parseDatedIndex(`<div class="post-item"><h3><a href="/blog/posts/k2">Kimi K2 Thinking</a></h3>
+    <time datetime="2026-08-12T00:00:00Z">2026-08-12</time></div>`, {
+    url: 'https://platform.kimi.com/blog', includePaths: ['/blog/posts/'], itemSelector: '.post-item', maxItems: 5,
+  })
+  assert.equal(dated[0].title, 'Kimi K2 Thinking')
+  assert.equal(dated[0].publishedAt, '2026-08-12T00:00:00.000Z')
+
+  const models = parseModelIndex(`<div class="model-row"><div><span class="model-title">DeepSeek-V4</span>
+    <span class="model-date">April 24, 2026</span></div><div>
+    <a href="https://cdn.deepseek.com/v4-card.pdf">Model Card</a>
+    <a href="https://huggingface.co/deepseek-ai/DeepSeek-V4/blob/main/report.pdf">Technical Report</a>
+    </div></div>`, {
+    url: 'https://www.deepseek.com/en/transparency/', lab: 'DeepSeek', titleSelector: '.model-title',
+    dateSelector: '.model-date', itemSelector: '.model-row', maxItems: 5,
+  })
+  assert.equal(models[0].title, 'DeepSeek-V4')
+  assert.equal(models[0].publishedAt, '2026-04-24T00:00:00.000Z')
+  assert.equal(models[0].discoveredLinks.length, 2)
+})
+
+test('Hugging Face model metadata carries an immutable repository revision', () => {
+  const sha = 'a'.repeat(40)
+  const items = parseHuggingFaceModels([{
+    id: 'lab/model', sha, createdAt: '2026-08-01', lastModified: '2026-08-12', tags: ['text-generation'],
+    cardData: { license: 'apache-2.0' }, gated: false,
+  }], { organization: 'lab', maxItems: 5 })
+  assert.equal(items[0].hubRevision, sha)
+  assert.equal(items[0].artifacts[0].revision, sha)
+  assert.equal(items[0].artifacts[0].immutableUrl, `https://huggingface.co/lab/model/tree/${sha}`)
+  assert.equal(items[0].artifacts[0].license, 'apache-2.0')
+})
+
+test('official pages recover dates from JSON-LD graphs and embedded app state', () => {
+  const graph = parseOfficialPage(`<script type="application/ld+json">{"@graph":[{
+    "@type":["Article","TechArticle"],"headline":"Model post","datePublished":"2026-07-31","dateModified":"2026-08-01"
+  }]}</script>`, 'https://lab.example/research/model')
+  assert.equal(graph.publishedAt, '2026-07-31T00:00:00.000Z')
+  assert.equal(graph.updatedAt, '2026-08-01T00:00:00.000Z')
+
+  const embedded = parseOfficialPage(`<h1>Research result</h1><script>self.push("{\\"publishedOn\\":\\"2026-08-10T17:00:00Z\\",\\"_updatedAt\\":\\"2026-08-13T23:32:23Z\\"}")</script>`, 'https://lab.example/research/result')
+  assert.equal(embedded.publishedAt, '2026-08-10T17:00:00.000Z')
+  assert.equal(embedded.updatedAt, '2026-08-13T23:32:23.000Z')
 })
 
 test('official page, index, and sitemap parsers remain first-party scoped', () => {
