@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import test from 'node:test'
 import { Context } from '@deepseek-ai/cordis'
+import { CredentialProvider } from '@deepseek-ai/dsh-credentials'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import * as FrontierRepro from '../index.js'
@@ -12,12 +13,30 @@ import { CLAIM_MODES, MODES } from '../lib/repro.js'
 
 const signal = new AbortController().signal
 
+class EmptyCredentials extends CredentialProvider {
+  async resolve() { return undefined }
+  async describe() { return { configured: false, writable: true } }
+  async set() {}
+  async unset() {}
+}
+
 async function setup() {
   const root = await mkdtemp(join(tmpdir(), 'frontier-integration-'))
   const storagePath = join(root, 'index.json')
   const ctx = new Context()
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
+  await ctx.plugin(FrontierRepro, { storagePath })
+  return { ctx, storagePath }
+}
+
+async function setupWithEmptyCredentials() {
+  const root = await mkdtemp(join(tmpdir(), 'frontier-integration-'))
+  const storagePath = join(root, 'index.json')
+  const ctx = new Context()
+  await ctx.plugin(SystemPrompt)
+  await ctx.plugin(ToolRuntime)
+  await ctx.plugin(EmptyCredentials)
   await ctx.plugin(FrontierRepro, { storagePath })
   return { ctx, storagePath }
 }
@@ -42,6 +61,31 @@ function availableClaims(mode) {
     state: 'available', evidence: [`checked:${key}`], note: 'verified for test',
   }]))
 }
+
+test('status remains lossless JSON when optional credential source is absent', async () => {
+  const { ctx } = await setupWithEmptyCredentials()
+  const status = valueOf(await call(ctx, 'status-empty-credentials', 'frontier_repro_status'))
+  assert.equal(status.credentials.x_api.configured, false)
+  assert.equal(Object.hasOwn(status.credentials.x_api, 'source'), false)
+  assert.equal(Object.hasOwn(status.capabilities['credential:x-api'], 'source'), false)
+})
+
+test('default collection selection skips optional X sources until the credential exists', () => {
+  const sources = [
+    { id: 'official', requires: ['network:https'] },
+    { id: 'person-x', requires: ['network:https', 'credential:x-api'] },
+  ]
+  const withoutX = FrontierRepro.selectCollectionSources(sources, undefined, false)
+  assert.deepEqual(withoutX.selected.map(source => source.id), ['official'])
+  assert.deepEqual(withoutX.skipped.map(source => source.id), ['person-x'])
+
+  const explicitlyRequested = FrontierRepro.selectCollectionSources(sources, ['person-x'], false)
+  assert.deepEqual(explicitlyRequested.selected.map(source => source.id), ['person-x'])
+  assert.deepEqual(explicitlyRequested.skipped, [])
+
+  const withX = FrontierRepro.selectCollectionSources(sources, undefined, true)
+  assert.deepEqual(withX.selected.map(source => source.id), ['official', 'person-x'])
+})
 
 test('real ToolRuntime registers the evidence gate and refuses unsupported success claims', async () => {
   const { ctx, storagePath } = await setup()

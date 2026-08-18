@@ -37,6 +37,10 @@ export const Config = z.object({
   promptOrder: z.number().default(145),
 })
 
+const XSettings = z.object({
+  xBearerTokenEnv: z.string().role('credential-ref').default('X_BEARER_TOKEN'),
+})
+
 function jsonOutput() {
   return {
     schema: { type: 'json' },
@@ -69,7 +73,11 @@ async function credentialStatus(ctx, refName) {
   const credentials = ctx.get('credentials')
   if (credentials !== undefined) {
     const description = await credentials.describe(ref)
-    return { configured: description.configured, source: description.source, reference: refName }
+    return {
+      configured: description.configured,
+      ...(description.source === undefined ? {} : { source: description.source }),
+      reference: refName,
+    }
   }
   return { configured: typeof process.env[ref] === 'string' && process.env[ref] !== '', source: 'process.env', reference: refName }
 }
@@ -129,6 +137,19 @@ function eventPriority(event) {
   return level + filledSlots * 3 + Math.min(12, immutable * 2) + event.corroboration.sourceCount * 3
 }
 
+/** Keep opt-in sources out of an ordinary collection until their capability is configured. */
+export function selectCollectionSources(sources, requestedIds, xCredentialAvailable) {
+  const explicit = Array.isArray(requestedIds) && requestedIds.length > 0
+  const requested = explicit ? requestedIds : sources.map(source => source.id)
+  const selected = [...new Set(requested)].map(id => sources.find(source => source.id === id)).filter(Boolean)
+  if (explicit || xCredentialAvailable) return { selected, skipped: [] }
+  const skipped = selected.filter(source => source.requires.includes('credential:x-api'))
+  return {
+    selected: selected.filter(source => !source.requires.includes('credential:x-api')),
+    skipped,
+  }
+}
+
 function compactEvent(event, watch, historyLength = 0) {
   return {
     id: event.id,
@@ -174,6 +195,21 @@ export function apply(ctx, inputConfig = {}) {
   const sourceById = new Map(sources.map(source => [source.id, source]))
   const store = new FrontierStore(resolveStoragePath(config), config.maxRecords, config.maxCollections)
   const collectionCoordinator = new CollectionCoordinator()
+  let xSettings = () => ({ xBearerTokenEnv: config.xBearerTokenEnv })
+
+  // Optional because headless/minimal profiles may not compose the settings service.
+  // The browser card is paired with this namespace when the service is present.
+  ctx.inject(['settings'], (settingsCtx) => {
+    const scope = settingsCtx.settings.register('frontier-repro', XSettings, {
+      base: { xBearerTokenEnv: config.xBearerTokenEnv },
+    })
+    xSettings = () => scope.get()
+    settingsCtx.effect(() => () => {
+      xSettings = () => ({ xBearerTokenEnv: config.xBearerTokenEnv })
+    }, 'frontier-repro: restore composition X credential reference')
+  })
+
+  const xCredentialRef = () => xSettings().xBearerTokenEnv ?? config.xBearerTokenEnv
 
   if (config.promptGuidance) {
     ctx.systemPrompt.section({
@@ -201,7 +237,8 @@ export function apply(ctx, inputConfig = {}) {
     output: jsonOutput(),
     async execute() {
       const data = await store.read()
-      const x = await credentialStatus(ctx, config.xBearerTokenEnv)
+      const xRef = xCredentialRef()
+      const x = await credentialStatus(ctx, xRef)
       const github = await credentialStatus(ctx, config.githubTokenEnv)
       const capabilities = {
         'network:https': {
@@ -212,8 +249,8 @@ export function apply(ctx, inputConfig = {}) {
         'credential:x-api': {
           available: x.configured,
           reference: x.reference,
-          source: x.source,
-          ...(x.configured ? {} : { missingCondition: `Configure ${config.xBearerTokenEnv} with X API read access.` }),
+          ...(x.source === undefined ? {} : { source: x.source }),
+          ...(x.configured ? {} : { missingCondition: `Configure ${xRef} with X API read access. X sources remain disabled by default.` }),
         },
       }
       return {
@@ -280,20 +317,19 @@ export function apply(ctx, inputConfig = {}) {
       const requested = Array.isArray(args.source_ids) && args.source_ids.length > 0 ? args.source_ids : sources.map(source => source.id)
       const unknown = requested.filter(id => !sourceById.has(id))
       if (unknown.length > 0) return { ok: false, code: 'unknown_source', unknown_source_ids: unknown }
-      const selected = [...new Set(requested)].map(id => sourceById.get(id))
+      const xRef = xCredentialRef()
+      const xBearerToken = await credentialValue(ctx, xRef)
+      const { selected, skipped } = selectCollectionSources(sources, args.source_ids, xBearerToken !== undefined)
       const query = args.query ?? ''
       const collectionInput = { query, sourceIds: selected.map(source => source.id), catalogDigest }
       return collectionCoordinator.run(collectionInput, async (transition) => {
-        const xBearerToken = selected.some(source => source.type === 'x_user')
-          ? await credentialValue(ctx, config.xBearerTokenEnv)
-          : undefined
         const githubToken = config.githubEnrichLimit > 0 || selected.some(source => source.type === 'github_org')
           ? await credentialValue(ctx, config.githubTokenEnv)
           : undefined
         const collected = await collectAll(selected, {
           query,
-          xBearerToken,
-          xBearerTokenEnv: config.xBearerTokenEnv,
+          xBearerToken: selected.some(source => source.type === 'x_user') ? xBearerToken : undefined,
+          xBearerTokenEnv: xRef,
           timeoutMs: config.requestTimeoutMs,
           maxBytes: config.maxResponseBytes,
           pageConcurrency: config.pageConcurrency,
@@ -327,6 +363,10 @@ export function apply(ctx, inputConfig = {}) {
           partial,
           collected: collected.records.length,
           returned: ranked.length,
+          skipped_sources: skipped.map(source => ({
+            id: source.id,
+            reason: `Optional X source disabled because ${xRef} is not configured.`,
+          })),
           ranking: 'source provenance + recency + linked artifacts + reproducibility signals + topic relevance',
           records: ranked.map(compact),
           evidence_bundle_total: affectedEvents.length,
