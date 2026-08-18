@@ -1,6 +1,6 @@
 # Design and overlap audit
 
-Research checked on 2026-08-16.
+Research checked on 2026-08-17.
 
 The architectural follow-up is documented in [architecture.md](architecture.md). It maps Cordis's revertible effects and reactive coeffects to collection transactions, explicit source capabilities, immutable manifests, and evidence topology.
 
@@ -28,9 +28,11 @@ Therefore this plugin does not expose generic `arxiv_search`, `read_paper`, `new
 
 - [arXiv API documentation](https://info.arxiv.org/help/api/index.html) and the official Atom endpoint.
 - [OpenAI Research](https://openai.com/research/index/) and [OpenAI News RSS](https://openai.com/news/rss.xml).
-- [Anthropic Newsroom](https://www.anthropic.com/news) and [Anthropic Engineering](https://www.anthropic.com/engineering).
+- [Anthropic Newsroom](https://www.anthropic.com/news), [Anthropic Research](https://www.anthropic.com/research), and [Anthropic Engineering](https://www.anthropic.com/engineering).
 - [Google DeepMind News](https://deepmind.google/blog/) and its RSS endpoint.
 - [DeepSeek API News](https://api-docs.deepseek.com/news/news250120/) plus the official [DeepSeek GitHub organization](https://github.com/deepseek-ai) and [verified Hugging Face organization](https://huggingface.co/deepseek-ai).
+- [DeepSeek Transparency](https://www.deepseek.com/en/transparency/), [Kimi Blog](https://platform.kimi.com/blog), [Moonshot AI models](https://huggingface.co/moonshotai), [MiniMax Research](https://www.minimax.io/blog), and [MiniMax models](https://huggingface.co/MiniMaxAI).
+- [NVIDIA Technical Blog](https://developer.nvidia.com/blog/), [AMD ROCm Blog](https://rocm.blogs.amd.com/), and [Intel Artificial Intelligence News](https://newsroom.intel.com/artificial-intelligence) for hardware/software co-design signals. Intel's community AI blog returned HTTP 403 to the plugin client, so the accessible first-party Newsroom feed is used with category and relevance filtering.
 - [Z.ai model release notes](https://docs.z.ai/release-notes/new-released), direct [Z.ai Research Blog](https://z.ai/blog/glm-5.2) articles linked by releases/models, and the [verified Z.ai Hugging Face organization](https://huggingface.co/zai-org). The general `/blog` route returned 404 during validation, so the plugin does not pretend it is a working discovery index.
 - [X API user-post endpoint](https://docs.x.com/x-api/users/get-posts), [user lookup](https://docs.x.com/x-api/users/lookup/introduction), and [current pricing](https://docs.x.com/x-api/getting-started/pricing).
 

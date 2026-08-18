@@ -25,4 +25,16 @@ test('every built-in source has a normalized capability declaration', () => {
   const sources = mergeSources()
   assert.equal(sources.length > 0, true)
   assert.equal(sources.every(item => item.requires.includes('network:https')), true)
+  assert.equal(['anthropic-research', 'kimi-blog', 'deepseek-transparency', 'moonshot-models', 'minimax-research',
+    'minimax-models', 'nvidia-technical-blog', 'amd-rocm-blog', 'intel-ai-news']
+    .every(id => sources.some(source => source.id === id)), true)
+})
+
+test('source quality contracts are validated at startup', () => {
+  const normalized = validateSource(source({
+    denyCategories: ['Company'], requirePublishedAt: true, boilerplateTitles: ['Generic page'], healthStaleAfterDays: 30,
+  }))
+  assert.deepEqual(normalized.denyCategories, ['Company'])
+  assert.equal(normalized.requirePublishedAt, true)
+  assert.throws(() => validateSource(source({ allowCategories: [''] })), /allowCategories/)
 })

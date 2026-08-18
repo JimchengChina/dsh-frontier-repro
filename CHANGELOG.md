@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.1
+
+- Add Anthropic Research, Kimi Blog, MiniMax Research, DeepSeek Transparency, NVIDIA Technical Blog, AMD ROCm Blog, Intel AI News, and verified Moonshot/MiniMax Hugging Face model sources.
+- Enforce per-source category allow/deny rules, required publication dates, excluded paths, and boilerplate-title rejection before persistence.
+- Track persistent source health: last success, newest accepted item, volume drift, structure fingerprint changes, consecutive failures, staleness, and last error.
+- Preserve arXiv versioned identities and URLs while retaining stable paper ids for deduplication.
+- Pin Hugging Face models and datasets to full repository SHAs, including linked artifacts discovered through papers and official pages.
+- Fix Sam Altman feed placeholder titles, DeepSeek API News fallback pages, Kimi generic child-page titles, and deterministic date-only parsing.
+
 ## 0.2.0
 
 - Enrich arXiv records through Hugging Face Paper Pages with linked public models, datasets, Spaces, project pages, and repositories.

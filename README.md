@@ -17,18 +17,21 @@ Existing DSH plugins already cover literature discovery/full text (`dsh-ai4schol
 - a hard separation between “prerequisites documented” and “reproduction executed”;
 - run evidence that rejects unsupported success claims.
 - Hugging Face paper-to-artifact expansion and immutable GitHub commit evidence;
+- immutable arXiv versions and Hugging Face model/dataset repository SHAs;
+- persistent source health with volume, structure, failure-streak, and staleness alerts;
 - serialized, journaled collection batches with guarded LIFO rollback;
 - an explicit evidence dependency graph and canonical reproduction handoff manifest.
 
 See [docs/research.md](docs/research.md) for the overlap audit and [docs/architecture.md](docs/architecture.md) for the Cordis spatiotemporal mapping.
 
-Corporate/personnel announcements and personal-life posts are filtered before persistence. Recent Hugging Face model cards are inspected only to discover paper, code, data, and evaluation links; full card text is not archived. arXiv records can also use Hugging Face Paper Pages to find linked public artifacts. GitHub repositories are resolved to the current full commit SHA, while their mutable star count is retained only as context.
+Corporate/personnel announcements, placeholder titles, missing-date records from date-contracted sources, and personal-life posts are filtered before persistence. Sources may declare category allow/deny lists and known boilerplate titles. Recent Hugging Face model cards are inspected only to discover paper, code, data, and evaluation links; full card text is not archived. arXiv records retain both a stable paper id and the observed immutable `vN`. GitHub repositories and public Hugging Face models/datasets are resolved to full SHAs, while mutable popularity counts remain context only.
 
 ## Built-in sources
 
 - arXiv categories `cs.AI`, `cs.CL`, `cs.LG`, `cs.CV`, `cs.RO`, and `cs.SE` through the official Atom API.
-- OpenAI News, Anthropic Newsroom and Engineering, Google DeepMind News, DeepSeek API News, and Z.ai model release notes. Z.ai's blog currently has no discoverable first-party index; direct blog links found in model pages remain artifact leads.
-- Verified DeepSeek and Z.ai Hugging Face organizations for model artifacts.
+- OpenAI News; Anthropic Newsroom, Research, and Engineering; Google DeepMind News; MiniMax Research; Kimi Blog; DeepSeek API News and Transparency; and Z.ai model release notes.
+- NVIDIA Technical Blog, AMD ROCm Blog, and the filtered Intel Artificial Intelligence News feed for training, inference, accelerator, compiler, and benchmark signals.
+- Verified DeepSeek, Moonshot AI, MiniMax, and Z.ai Hugging Face organizations for model artifacts.
 - Sam Altman's blog and Jack Clark's Import AI.
 - Sam Altman, Dario Amodei, and Demis Hassabis on X, through X API v2 only.
 
@@ -38,7 +41,7 @@ No unverified DeepSeek-founder or GLM-person account is preloaded. Add a custom 
 
 | Tool | Purpose |
 |---|---|
-| `frontier_repro_status` | Source, corpus, and credential status without network access |
+| `frontier_repro_status` | Source, corpus, credential, and persisted source-health status without network access |
 | `frontier_repro_collect` | Refresh curated sources, persist, dedupe, and rank signals |
 | `frontier_repro_search` | Search the local corpus only |
 | `frontier_repro_revert_collection` | Safely undo the latest live collection batch |
@@ -82,6 +85,7 @@ No HTML scraping fallback is used.
     maxResponseBytes: 5242880
     pageConcurrency: 3
     githubEnrichLimit: 8
+    huggingFaceEnrichLimit: 20
     githubTokenEnv: GITHUB_TOKEN
     xBearerTokenEnv: X_BEARER_TOKEN
     # storagePath: /absolute/path/index.json
@@ -90,7 +94,7 @@ No HTML scraping fallback is used.
     promptOrder: 145
 ```
 
-`sourceFile` is trusted local administrator configuration. Tool arguments never accept arbitrary source URLs. Person sources require a name, role, and first-party identity evidence. `GITHUB_TOKEN` is optional and only raises public API limits; X API access remains explicitly required for X sources. See [sources.example.json](sources.example.json) and [docs/source-policy.md](docs/source-policy.md).
+`sourceFile` is trusted local administrator configuration. Tool arguments never accept arbitrary source URLs. Custom sources may declare `allowCategories`, `denyCategories`, `requirePublishedAt`, `boilerplateTitles`, and `healthStaleAfterDays`. Person sources require a name, role, and first-party identity evidence. `GITHUB_TOKEN` is optional and only raises public API limits; X API access remains explicitly required for X sources. See [sources.example.json](sources.example.json) and [docs/source-policy.md](docs/source-policy.md).
 
 ## Verification
 
@@ -106,10 +110,11 @@ The tests cover parsing, enrichment, digests, lifecycle serialization, transacti
 ## Limitations
 
 - First-party sites change. Source failures are isolated and reported; successful records still persist.
+- Source-health alerts indicate collection drift or staleness, not that an upstream publication is false or abandoned.
 - OpenAI RSS is fetchable while article pages may block automated clients. The feed record remains usable and a selected page can be verified with DSH's browser/web capability.
 - A primary source proves provenance, not correctness. Ranking is discovery priority, not a truth score.
 - X requires the user's own API entitlement and budget; the plugin does not bypass access controls.
-- Anonymous GitHub API requests have low rate limits. Configure the optional token or reduce `githubEnrichLimit`; a pinning failure is reported and does not erase the source record.
+- Anonymous GitHub API requests have low rate limits. Configure the optional token or reduce `githubEnrichLimit`; Hugging Face pinning can be bounded with `huggingFaceEnrichLimit`. A pinning failure is reported and does not erase the source record.
 - The gate checks evidence completeness and consistency, not whether every submitted evidence statement is true.
 - Manifest integrity is a deterministic content digest, not an identity signature or remote artifact checksum.
 - Scheduling is deliberately left to existing DSH schedule/cron plugins.

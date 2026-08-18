@@ -11,11 +11,17 @@ A built-in source must be one of:
 
 The plugin does not ingest media, SEO summaries, anonymous reposts, generic X search, influencer accounts, or arbitrary URLs supplied by the model.
 
+Each source can declare a bounded quality contract: category allow/deny lists, required publication dates, excluded index paths, known boilerplate titles, and a staleness window. These checks run before technical relevance scoring and persistence. Rejections are counted by reason so stricter rules cannot silently erase records.
+
 ## Provenance fields
 
 Every record retains its source id/class, lab, canonical URL, source endpoint, collection time, and any person identity evidence. Ranking never removes these fields. Cross-source duplicates retain the first normalized record and list corroborating source ids.
 
-For arXiv records, the plugin may query Hugging Face Paper Pages for linked public repositories, models, datasets, and Spaces. These community-maintained links are artifact leads, not independent verification. Public GitHub repository roots may be resolved through the official REST API to a full default-branch commit plus license/archive metadata. Mutable stars never contribute to truth or source-authority scores.
+For arXiv records, the plugin preserves the stable paper id for deduplication and the observed versioned id/URLs for execution evidence. It may query Hugging Face Paper Pages for linked public repositories, models, datasets, and Spaces. These community-maintained links are artifact leads, not independent verification. Public GitHub repository roots may be resolved through the official REST API to a full default-branch commit plus license/archive metadata. Public Hugging Face model and dataset repositories may likewise be pinned to their full Hub SHA. Mutable stars never contribute to truth or source-authority scores.
+
+## Source health
+
+Successful and failed collection observations update a small persistent health record: last attempt/success, newest accepted publication, accepted/raw/rejected counts, count delta, structure fingerprint, failure streak, staleness, and last error. A material count drop, changed structure, repeated failure, or stale newest item raises an alert. Health is operational evidence about the adapter and upstream publication cadence; it is not a truth or project-quality score.
 
 Person identities can change. The built-in catalog is conservative and should be re-audited on releases. When a reliable, lab-verifiable public channel does not exist, absence is preferred to a guessed account.
 

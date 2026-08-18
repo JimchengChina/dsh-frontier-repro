@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { githubRepositoryEnrichment, githubRepositoryIdentity, huggingFacePaperEnrichment } from '../lib/enrich.js'
+import {
+  githubRepositoryEnrichment,
+  githubRepositoryIdentity,
+  huggingFacePaperEnrichment,
+  huggingFaceRepositoryEnrichment,
+  huggingFaceRepositoryIdentity,
+} from '../lib/enrich.js'
 
 test('Hugging Face paper metadata becomes bounded public artifact candidates', () => {
   const result = huggingFacePaperEnrichment({
@@ -20,6 +26,22 @@ test('private Hub repositories and mismatched paper ids are rejected', () => {
   const result = huggingFacePaperEnrichment({ id: '2608.00001', linkedModels: [{ id: 'lab/private', private: true }] }, '2608.00001')
   assert.deepEqual(result.artifacts, [])
   assert.throws(() => huggingFacePaperEnrichment({ id: 'wrong' }, '2608.00001'), /did not match/)
+})
+
+test('Hugging Face model and dataset URLs are pinned to repository SHAs', () => {
+  const sha = 'c'.repeat(40)
+  const model = huggingFaceRepositoryIdentity('https://huggingface.co/lab/model/blob/main/report.pdf')
+  assert.deepEqual(model, { repoType: 'model', repoId: 'lab/model', rootUrl: 'https://huggingface.co/lab/model' })
+  const patch = huggingFaceRepositoryEnrichment({
+    id: 'lab/model', sha, private: false, gated: false, cardData: { license: 'mit' },
+  }, model, 'https://huggingface.co/lab/model/blob/main/report.pdf')
+  assert.equal(patch.immutableUrl, `https://huggingface.co/lab/model/blob/${sha}/report.pdf`)
+  assert.equal(patch.revision, sha)
+  assert.equal(patch.license, 'mit')
+  assert.deepEqual(huggingFaceRepositoryIdentity('https://huggingface.co/datasets/lab/data'), {
+    repoType: 'dataset', repoId: 'lab/data', rootUrl: 'https://huggingface.co/datasets/lab/data',
+  })
+  assert.equal(huggingFaceRepositoryIdentity('https://huggingface.co/collections/lab'), undefined)
 })
 
 test('GitHub repository roots are normalized without trusting subpaths', () => {

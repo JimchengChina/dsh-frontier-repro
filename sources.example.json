@@ -6,6 +6,10 @@
     "lab": "Your Lab",
     "name": "Your Lab Research Feed",
     "url": "https://example.com/research/feed.xml",
+    "denyCategories": ["Company", "Events"],
+    "requirePublishedAt": true,
+    "boilerplateTitles": ["Your Lab Blog"],
+    "healthStaleAfterDays": 45,
     "maxItems": 20
   },
   {
