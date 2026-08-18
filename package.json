@@ -1,6 +1,6 @@
 {
   "name": "dsh-frontier-repro",
-  "version": "0.2.1",
+  "version": "0.3.1",
   "description": "Evidence-first frontier AI radar and reproducibility gate for DeepSeek Harness",
   "keywords": [
     "deepseek-harness",
@@ -13,9 +13,12 @@
   "main": "index.js",
   "exports": {
     ".": "./index.js",
+    "./client": "./lib/client.js",
     "./core": "./lib/repro.js",
     "./catalog": "./lib/catalog.js",
+    "./events": "./lib/events.js",
     "./manifest": "./lib/manifest.js",
+    "./trackio": "./lib/trackio.js",
     "./package.json": "./package.json"
   },
   "files": [
@@ -27,17 +30,33 @@
     "README.zh-CN.md",
     "CHANGELOG.md",
     "SECURITY.md",
-    "docs",
+    "docs/architecture.md",
+    "docs/awesome-entry.yml",
+    "docs/reproduction-manifest.schema.json",
+    "docs/research.md",
+    "docs/source-policy.md",
     "scripts",
     "LICENSE"
   ],
   "scripts": {
     "check": "node --check index.js && node --check lib/*.js && node --check scripts/*.mjs",
+    "bundle:client": "tsdown",
+    "postinstall": "node scripts/postinstall.mjs",
     "test": "node --test",
-    "verify": "pnpm run check && pnpm test",
+    "verify": "node --check index.js && node --check lib/*.js && node --check scripts/*.mjs && node --test",
     "smoke:plugin": "node scripts/smoke-plugin.mjs"
   },
   "dsh": {
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-settings-plugins",
+        "@deepseek-ai/dsh-api-remotes"
+      ],
+      "platform": "web"
+    },
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
@@ -55,9 +74,9 @@
   },
   "homepage": "https://github.com/JimchengChina/dsh-frontier-repro#readme",
   "peerDependencies": {
-    "@deepseek-ai/dsh-credentials": ">=0.1.0-rc.6 <0.2.0",
-    "@deepseek-ai/dsh-home-paths": ">=0.1.0-rc.6 <0.2.0",
-    "@deepseek-ai/dsh-tools": ">=0.1.0-rc.6 <0.2.0",
+    "@deepseek-ai/dsh-credentials": ">=0.1.0-rc.7 <0.2.0",
+    "@deepseek-ai/dsh-home-paths": ">=0.1.0-rc.7 <0.2.0",
+    "@deepseek-ai/dsh-tools": ">=0.1.0-rc.7 <0.2.0",
     "@deepseek-ai/schemastery": "^3.18.1"
   },
   "dependencies": {
@@ -66,11 +85,12 @@
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.1",
-    "@deepseek-ai/dsh-credentials": "0.1.0-rc.6",
-    "@deepseek-ai/dsh-home-paths": "0.1.0-rc.6",
-    "@deepseek-ai/dsh-system-prompt": "0.1.0-rc.6",
-    "@deepseek-ai/dsh-tools": "0.1.0-rc.6",
-    "@deepseek-ai/schemastery": "3.18.1"
+    "@deepseek-ai/dsh-credentials": "0.1.0-rc.7",
+    "@deepseek-ai/dsh-home-paths": "0.1.0-rc.7",
+    "@deepseek-ai/dsh-system-prompt": "0.1.0-rc.7",
+    "@deepseek-ai/dsh-tools": "0.1.0-rc.7",
+    "@deepseek-ai/schemastery": "3.18.1",
+    "tsdown": "0.22.2"
   },
   "publishConfig": {
     "access": "public"

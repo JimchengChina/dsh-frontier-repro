@@ -7,12 +7,13 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import { mergeSources } from './lib/catalog.js'
 import { collectAll, filterRecords } from './lib/collector.js'
 import { rankRecords } from './lib/rank.js'
-import { assessReproduction, recordRun } from './lib/repro.js'
+import { assessClaims, assessReproduction, recordAttempt, recordRun } from './lib/repro.js'
 import { FrontierStore, sourceHealthView } from './lib/store.js'
 import { CollectionCoordinator } from './lib/lifecycle.js'
 import { sourceCatalogDigest } from './lib/canonical.js'
 import { buildEvidenceGraph } from './lib/graph.js'
 import { createReproductionManifest } from './lib/manifest.js'
+import { createTrackioScaffold } from './lib/trackio.js'
 
 export const name = 'frontier-repro'
 export const inject = ['systemPrompt', 'tools']
@@ -34,6 +35,10 @@ export const Config = z.object({
   huggingFaceEnrichLimit: z.natural().default(20),
   promptGuidance: z.boolean().default(true),
   promptOrder: z.number().default(145),
+})
+
+const XSettings = z.object({
+  xBearerTokenEnv: z.string().role('credential-ref').default('X_BEARER_TOKEN'),
 })
 
 function jsonOutput() {
@@ -68,7 +73,11 @@ async function credentialStatus(ctx, refName) {
   const credentials = ctx.get('credentials')
   if (credentials !== undefined) {
     const description = await credentials.describe(ref)
-    return { configured: description.configured, source: description.source, reference: refName }
+    return {
+      configured: description.configured,
+      ...(description.source === undefined ? {} : { source: description.source }),
+      reference: refName,
+    }
   }
   return { configured: typeof process.env[ref] === 'string' && process.env[ref] !== '', source: 'process.env', reference: refName }
 }
@@ -89,7 +98,7 @@ function compact(record) {
     source_id: record.sourceId,
     source_class: record.sourceClass,
     url: record.url,
-    published_at: record.publishedAt,
+    ...(record.publishedAt === undefined ? {} : { published_at: record.publishedAt }),
     summary: record.summary.slice(0, 700),
     artifacts: record.artifacts,
     score: record.score,
@@ -100,6 +109,68 @@ function requireRecord(data, id) {
   const record = data.records.find(candidate => candidate.id === id)
   if (record === undefined) return { ok: false, code: 'record_not_found', message: `No frontier record has id "${id}".` }
   return { ok: true, record }
+}
+
+function requireTarget(data, id, targetType) {
+  if (targetType !== 'record' && data.events[id] !== undefined) return { ok: true, type: 'event', value: data.events[id] }
+  const record = data.records.find(candidate => candidate.id === id)
+  if (record !== undefined && targetType !== 'event') return { ok: true, type: 'record', value: record }
+  return { ok: false, code: 'target_not_found', message: `No ${targetType ?? 'event or record'} has id "${id}".` }
+}
+
+function digestTarget(target) {
+  return target.type === 'event'
+    ? target.value.substantiveDigest
+    : target.value.contentDigest ?? canonicalDigest(target.value)
+}
+
+function materialChangeCount(event) {
+  const sections = [event.changes?.capabilities, event.changes?.evaluations, event.changes?.licenses,
+    ...Object.values(event.changes?.evidence ?? {})]
+  return sections.reduce((count, section) => count + (section?.added?.length ?? 0) + (section?.removed?.length ?? 0), 0)
+}
+
+function eventPriority(event) {
+  const filledSlots = Object.values(event.evidence).filter(items => items.length > 0).length
+  const immutable = Object.values(event.evidence).flat().filter(item => item.immutable).length
+  const level = { exact_candidate: 20, scaled_candidate: 12, behavioral_candidate: 6, blocked: 0 }[event.reproductionLevel] ?? 0
+  return level + filledSlots * 3 + Math.min(12, immutable * 2) + event.corroboration.sourceCount * 3
+}
+
+/** Keep opt-in sources out of an ordinary collection until their capability is configured. */
+export function selectCollectionSources(sources, requestedIds, xCredentialAvailable) {
+  const explicit = Array.isArray(requestedIds) && requestedIds.length > 0
+  const requested = explicit ? requestedIds : sources.map(source => source.id)
+  const selected = [...new Set(requested)].map(id => sources.find(source => source.id === id)).filter(Boolean)
+  if (explicit || xCredentialAvailable) return { selected, skipped: [] }
+  const skipped = selected.filter(source => source.requires.includes('credential:x-api'))
+  return {
+    selected: selected.filter(source => !source.requires.includes('credential:x-api')),
+    skipped,
+  }
+}
+
+function compactEvent(event, watch, historyLength = 0) {
+  return {
+    id: event.id,
+    title: event.title,
+    lab: event.lab,
+    ...(event.entity === undefined ? {} : { entity: event.entity }),
+    version: event.version,
+    substantive_digest: event.substantiveDigest,
+    ...(event.supersedesDigest === undefined ? {} : { supersedes_digest: event.supersedesDigest }),
+    first_seen_at: event.firstSeenAt,
+    last_seen_at: event.lastSeenAt,
+    reproduction_level: event.reproductionLevel,
+    priority_score: eventPriority(event),
+    corroboration: event.corroboration,
+    missing: event.missing,
+    record_count: event.recordIds.length,
+    history_versions: historyLength,
+    material_change_count: materialChangeCount(event),
+    watchlisted: watch !== undefined,
+    changed_since_watch: watch !== undefined && watch.baselineDigest !== event.substantiveDigest,
+  }
 }
 
 export function apply(ctx, inputConfig = {}) {
@@ -124,6 +195,21 @@ export function apply(ctx, inputConfig = {}) {
   const sourceById = new Map(sources.map(source => [source.id, source]))
   const store = new FrontierStore(resolveStoragePath(config), config.maxRecords, config.maxCollections)
   const collectionCoordinator = new CollectionCoordinator()
+  let xSettings = () => ({ xBearerTokenEnv: config.xBearerTokenEnv })
+
+  // Optional because headless/minimal profiles may not compose the settings service.
+  // The browser card is paired with this namespace when the service is present.
+  ctx.inject(['settings'], (settingsCtx) => {
+    const scope = settingsCtx.settings.register('frontier-repro', XSettings, {
+      base: { xBearerTokenEnv: config.xBearerTokenEnv },
+    })
+    xSettings = () => scope.get()
+    settingsCtx.effect(() => () => {
+      xSettings = () => ({ xBearerTokenEnv: config.xBearerTokenEnv })
+    }, 'frontier-repro: restore composition X credential reference')
+  })
+
+  const xCredentialRef = () => xSettings().xBearerTokenEnv ?? config.xBearerTokenEnv
 
   if (config.promptGuidance) {
     ctx.systemPrompt.section({
@@ -132,12 +218,14 @@ export function apply(ctx, inputConfig = {}) {
       text:
         'Use frontier_repro_collect for new frontier-AI signals from curated primary sources, and frontier_repro_search for the saved corpus. '
         + 'This plugin is not a general news or paper-summary tool: inspect a record and its primary artifacts before drawing conclusions. '
+        + 'Use frontier_repro_events and frontier_repro_bundle to work with cross-source release evidence, and frontier_repro_watch to report only substantive changes. '
         + 'For reproduction work, define one observable target, gather evidence for every requirement, then call frontier_repro_assess. '
         + 'A ready_exact, ready_scaled, or ready_behavioral result means prerequisites are documented; it does not mean the feature was reproduced. '
         + 'Use normal filesystem, shell, web, and evaluation tools to implement in an isolated workspace. Pin artifact versions, begin with the smallest baseline, '
         + 'and do not upgrade scaled or behavioral equivalence to an exact-reproduction claim. Record executed commands, artifact paths, metrics, deviations, '
-        + 'and the honest verdict with frontier_repro_record_result. Never mark a run passed without measurable evaluation evidence. Use frontier_repro_graph '
-        + 'to inspect missing dependencies and frontier_repro_manifest to hand a frozen plan to an execution system. '
+        + 'and the honest verdict with frontier_repro_record_result. Never mark a run passed without measurable evaluation evidence. '
+        + 'For new work, prefer claim-level frontier_repro_assess_claims and frontier_repro_record_attempt; preserve failures and require a verifier. Toy outcomes remain toy_only. '
+        + 'Use frontier_repro_graph to inspect missing dependencies and frontier_repro_manifest to hand a frozen plan to an execution system. '
         + 'When X sources are unavailable, report the missing X_BEARER_TOKEN/API access condition instead of scraping X pages.',
     })
   }
@@ -149,7 +237,8 @@ export function apply(ctx, inputConfig = {}) {
     output: jsonOutput(),
     async execute() {
       const data = await store.read()
-      const x = await credentialStatus(ctx, config.xBearerTokenEnv)
+      const xRef = xCredentialRef()
+      const x = await credentialStatus(ctx, xRef)
       const github = await credentialStatus(ctx, config.githubTokenEnv)
       const capabilities = {
         'network:https': {
@@ -160,14 +249,17 @@ export function apply(ctx, inputConfig = {}) {
         'credential:x-api': {
           available: x.configured,
           reference: x.reference,
-          source: x.source,
-          ...(x.configured ? {} : { missingCondition: `Configure ${config.xBearerTokenEnv} with X API read access.` }),
+          ...(x.source === undefined ? {} : { source: x.source }),
+          ...(x.configured ? {} : { missingCondition: `Configure ${xRef} with X API read access. X sources remain disabled by default.` }),
         },
       }
       return {
         ok: true,
         storage_path: store.filename,
         corpus_records: data.records.length,
+        evidence_bundles: Object.keys(data.events).length,
+        watchlisted_bundles: Object.keys(data.watchlist).length,
+        preserved_attempts: Object.values(data.attempts).reduce((sum, attempts) => sum + attempts.length, 0),
         collection_history: data.collections.length,
         ...(data.collections.at(-1) === undefined ? {} : { latest_collection: {
           id: data.collections.at(-1).id,
@@ -175,7 +267,7 @@ export function apply(ctx, inputConfig = {}) {
           digest: data.collections.at(-1).digest,
           finished_at: data.collections.at(-1).finishedAt,
         } }),
-        updated_at: data.updatedAt,
+        ...(data.updatedAt === undefined ? {} : { updated_at: data.updatedAt }),
         source_health_alerts: Object.values(data.sourceHealth)
           .map(health => sourceHealthView(health).alerts.length)
           .reduce((sum, count) => sum + count, 0),
@@ -225,31 +317,30 @@ export function apply(ctx, inputConfig = {}) {
       const requested = Array.isArray(args.source_ids) && args.source_ids.length > 0 ? args.source_ids : sources.map(source => source.id)
       const unknown = requested.filter(id => !sourceById.has(id))
       if (unknown.length > 0) return { ok: false, code: 'unknown_source', unknown_source_ids: unknown }
-      const selected = [...new Set(requested)].map(id => sourceById.get(id))
+      const xRef = xCredentialRef()
+      const xBearerToken = await credentialValue(ctx, xRef)
+      const { selected, skipped } = selectCollectionSources(sources, args.source_ids, xBearerToken !== undefined)
       const query = args.query ?? ''
       const collectionInput = { query, sourceIds: selected.map(source => source.id), catalogDigest }
       return collectionCoordinator.run(collectionInput, async (transition) => {
-        const xBearerToken = selected.some(source => source.type === 'x_user')
-          ? await credentialValue(ctx, config.xBearerTokenEnv)
-          : undefined
-        const githubToken = config.githubEnrichLimit > 0
+        const githubToken = config.githubEnrichLimit > 0 || selected.some(source => source.type === 'github_org')
           ? await credentialValue(ctx, config.githubTokenEnv)
           : undefined
         const collected = await collectAll(selected, {
           query,
-          xBearerToken,
-          xBearerTokenEnv: config.xBearerTokenEnv,
+          xBearerToken: selected.some(source => source.type === 'x_user') ? xBearerToken : undefined,
+          xBearerTokenEnv: xRef,
           timeoutMs: config.requestTimeoutMs,
           maxBytes: config.maxResponseBytes,
           pageConcurrency: config.pageConcurrency,
           githubEnrichLimit: config.githubEnrichLimit,
           huggingFaceEnrichLimit: config.huggingFaceEnrichLimit,
           githubToken,
-          userAgent: 'dsh-frontier-repro/0.2.1 (+https://github.com/JimchengChina/dsh-frontier-repro)',
+          userAgent: 'dsh-frontier-repro/0.3.0 (+https://github.com/JimchengChina/dsh-frontier-repro)',
         })
         const partial = collected.sources.some(source => !source.ok || source.warnings.length > 0)
           || Object.values(collected.enrichments).some(report => report.warnings.length > 0)
-        await store.commitCollection(collected.records, {
+        const committed = await store.commitCollection(collected.records, {
           ...transition,
           finishedAt: new Date().toISOString(),
           input: collectionInput,
@@ -261,17 +352,125 @@ export function apply(ctx, inputConfig = {}) {
         const limit = boundedInteger(args.limit, config.defaultLimit, 1, 100)
         const filtered = filterRecords(collected.records, { query, days })
         const ranked = rankRecords(filtered, query).slice(0, limit)
+        const incomingIds = new Set(collected.records.map(record => record.id))
+        const affectedEvents = Object.values(committed.events)
+          .filter(event => event.recordIds.some(id => incomingIds.has(id)))
+          .sort((left, right) => eventPriority(right) - eventPriority(left)
+            || (right.lastSeenAt ?? '').localeCompare(left.lastSeenAt ?? ''))
+          .map(event => compactEvent(event, committed.watchlist[event.id], committed.eventHistory[event.id]?.length ?? 0))
         return {
           ok: true,
           partial,
           collected: collected.records.length,
           returned: ranked.length,
+          skipped_sources: skipped.map(source => ({
+            id: source.id,
+            reason: `Optional X source disabled because ${xRef} is not configured.`,
+          })),
           ranking: 'source provenance + recency + linked artifacts + reproducibility signals + topic relevance',
           records: ranked.map(compact),
+          evidence_bundle_total: affectedEvents.length,
+          evidence_bundles: affectedEvents.slice(0, limit),
           sources: collected.sources,
           enrichments: collected.enrichments,
         }
       })
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'frontier_repro_events',
+    description: 'List cross-source frontier release evidence bundles. Watch filters compare only capability, evaluation, license, and immutable-artifact changes.',
+    parameters: {
+      query: { type: 'string', description: 'Match event title, entity, lab, or capability claim.' },
+      labs: { type: 'array', items: { type: 'string' } },
+      watchlisted_only: { type: 'boolean' },
+      changed_only: { type: 'boolean', description: 'Return only watchlisted events whose substantive digest changed since acknowledgement.' },
+      limit: { type: 'integer', description: 'Maximum returned bundles; 1-100.' },
+    },
+    output: jsonOutput(),
+    async execute(args) {
+      const data = await store.read()
+      const tokens = String(args.query ?? '').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(token => token.length >= 2)
+      const labs = new Set((args.labs ?? []).map(lab => lab.toLowerCase()))
+      const events = Object.values(data.events).filter(event => {
+        const watch = data.watchlist[event.id]
+        if ((args.watchlisted_only === true || args.changed_only === true) && watch === undefined) return false
+        if (args.changed_only === true && watch.baselineDigest === event.substantiveDigest) return false
+        if (labs.size > 0 && !labs.has(event.lab.toLowerCase())) return false
+        if (tokens.length > 0) {
+          const text = `${event.title} ${event.entity ?? ''} ${event.lab} ${event.capabilities.join(' ')}`.toLowerCase()
+          if (!tokens.some(token => text.includes(token))) return false
+        }
+        return true
+      }).sort((left, right) => eventPriority(right) - eventPriority(left)
+        || (right.lastSeenAt ?? '').localeCompare(left.lastSeenAt ?? ''))
+      const limit = boundedInteger(args.limit, config.defaultLimit, 1, 100)
+      return {
+        ok: true,
+        total: events.length,
+        returned: Math.min(limit, events.length),
+        events: events.slice(0, limit).map(event => compactEvent(
+          event,
+          data.watchlist[event.id],
+          data.eventHistory[event.id]?.length ?? 0,
+        )),
+      }
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'frontier_repro_bundle',
+    description: 'Get one versioned release evidence bundle, its predecessor chain, source records, watch state, claim assessments, and every preserved attempt.',
+    parameters: { event_id: { type: 'string', required: true } },
+    output: jsonOutput(),
+    async execute(args) {
+      const data = await store.read()
+      const event = data.events[args.event_id]
+      if (event === undefined) return { ok: false, code: 'event_not_found', message: `No evidence bundle has id "${args.event_id}".` }
+      const ids = new Set(event.recordIds)
+      return {
+        ok: true,
+        bundle: event,
+        history: data.eventHistory[event.id] ?? [],
+        records: data.records.filter(record => ids.has(record.id)),
+        ...(data.watchlist[event.id] === undefined ? {} : { watch: data.watchlist[event.id] }),
+        claim_assessments: data.claimAssessments[event.id] ?? [],
+        attempts: data.attempts[event.id] ?? [],
+      }
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'frontier_repro_watch',
+    description: 'Add, remove, acknowledge, or list a release watch. Acknowledgement advances the substantive-digest baseline without deleting history.',
+    parameters: {
+      action: { type: 'string', required: true, enum: ['list', 'add', 'remove', 'acknowledge'] },
+      event_id: { type: 'string', description: 'Required except for list.' },
+      note: { type: 'string' },
+    },
+    output: jsonOutput(),
+    async execute(args) {
+      if (args.action === 'list') {
+        const data = await store.read()
+        return { ok: true, watches: Object.values(data.watchlist).map(watch => ({
+          ...watch,
+          event: data.events[watch.eventId] === undefined ? undefined : compactEvent(data.events[watch.eventId], watch, data.eventHistory[watch.eventId]?.length ?? 0),
+        })) }
+      }
+      if (typeof args.event_id !== 'string' || args.event_id.trim() === '') {
+        return { ok: false, code: 'event_id_required', message: `event_id is required for ${args.action}.` }
+      }
+      try {
+        const data = await store.saveWatch(args.event_id, args.action, args.note)
+        return { ok: true, action: args.action, ...(data.watchlist[args.event_id] === undefined ? {} : { watch: data.watchlist[args.event_id] }), event: compactEvent(
+          data.events[args.event_id],
+          data.watchlist[args.event_id],
+          data.eventHistory[args.event_id]?.length ?? 0,
+        ) }
+      } catch (error) {
+        return { ok: false, code: 'invalid_watch_action', message: error.message }
+      }
     },
   }))
 
@@ -348,8 +547,12 @@ export function apply(ctx, inputConfig = {}) {
       return {
         ok: true,
         record: found.record,
-        assessment: data.assessments[args.id],
+        ...(data.assessments[args.id] === undefined ? {} : { assessment: data.assessments[args.id] }),
         runs: data.runs[args.id] ?? [],
+        evidence_bundles: Object.values(data.events).filter(event => event.recordIds.includes(args.id))
+          .map(event => compactEvent(event, data.watchlist[event.id], data.eventHistory[event.id]?.length ?? 0)),
+        claim_assessments: data.claimAssessments[args.id] ?? [],
+        attempts: data.attempts[args.id] ?? [],
       }
     },
   }))
@@ -391,6 +594,136 @@ export function apply(ctx, inputConfig = {}) {
         return { ok: true, record: { id: found.record.id, title: found.record.title, url: found.record.url }, assessment }
       } catch (error) {
         return { ok: false, code: 'invalid_assessment', message: error.message }
+      }
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'frontier_repro_assess_claims',
+    description: 'Create a claim-level reproduction gate for an event or record. Supports executing existing work, partial reimplementation, or from-scratch replication at exact, scaled, or toy equivalence.',
+    parameters: {
+      id: { type: 'string', required: true, description: 'Evidence bundle id or frontier record id.' },
+      target_type: { type: 'string', enum: ['event', 'record'], description: 'Optional disambiguation.' },
+      target: { type: 'string', required: true, description: 'Observable feature or result being reproduced.' },
+      mode: { type: 'string', required: true, enum: ['execute_existing', 'partial_reimplementation', 'from_scratch_replication'] },
+      equivalence: { type: 'string', required: true, enum: ['exact', 'scaled', 'toy'] },
+      claims: {
+        type: 'json',
+        required: true,
+        description: 'Array of 1-50 independently testable claims: {id, statement, observable?, metric, operator, expected, tolerance?, weight?, required?, evidence:string[]}.',
+      },
+      requirements: {
+        type: 'json',
+        required: true,
+        description: 'Evidence matrix using the same requirement keys and states as frontier_repro_assess.',
+      },
+      environment: { type: 'json', description: 'Planned hardware, runtime, budget, access, and time constraints.' },
+    },
+    output: jsonOutput(),
+    async execute(args) {
+      const data = await store.read()
+      const target = requireTarget(data, args.id, args.target_type)
+      if (!target.ok) return target
+      try {
+        const assessment = assessClaims({
+          targetId: args.id,
+          targetType: target.type,
+          targetDigest: digestTarget(target),
+          targetVersion: target.type === 'event' ? target.value.version : undefined,
+          target: args.target,
+          mode: args.mode,
+          equivalence: args.equivalence,
+          claims: args.claims,
+          requirements: args.requirements,
+          environment: args.environment ?? {},
+        })
+        await store.appendClaimAssessment(args.id, assessment)
+        return { ok: true, target: { id: args.id, type: target.type, title: target.value.title }, assessment }
+      } catch (error) {
+        return { ok: false, code: 'invalid_claim_assessment', message: error.message }
+      }
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'frontier_repro_record_attempt',
+    description: 'Append one immutable reproduction attempt, including failures and negative results. A passed exact/scaled attempt requires all claim metrics plus verifier identity and evidence; toy remains toy_only.',
+    parameters: {
+      id: { type: 'string', required: true, description: 'Evidence bundle id or frontier record id.' },
+      target_type: { type: 'string', enum: ['event', 'record'] },
+      assessment_id: { type: 'string', description: 'Saved claim assessment id; defaults to the latest.' },
+      mode: { type: 'string', required: true, enum: ['execute_existing', 'partial_reimplementation', 'from_scratch_replication'] },
+      equivalence: { type: 'string', required: true, enum: ['exact', 'scaled', 'toy'] },
+      verdict: { type: 'string', required: true, enum: ['passed', 'partial', 'failed', 'blocked', 'negative'] },
+      commands: { type: 'array', items: { type: 'string' } },
+      artifacts: { type: 'array', items: { type: 'string' } },
+      metrics: { type: 'json' },
+      claim_results: { type: 'json', description: 'Array of {claimId, actual?, passed, evidence:string[], note?}.' },
+      resources: { type: 'json', description: '{gpuModel,gpuCount,vramGb,cpuModel,cpuCount,durationSeconds,costUsd,dataScale,relativeToPaper,jobUrl}.' },
+      verifier: { type: 'json', description: '{kind,identity,verdict:passed|failed|inconclusive,evidence:string[]}.' },
+      deviations: { type: 'array', items: { type: 'string' } },
+      notes: { type: 'string' },
+    },
+    output: jsonOutput(),
+    async execute(args) {
+      const data = await store.read()
+      const target = requireTarget(data, args.id, args.target_type)
+      if (!target.ok) return target
+      const assessments = data.claimAssessments[args.id] ?? []
+      const assessment = args.assessment_id === undefined
+        ? assessments.at(-1)
+        : assessments.find(candidate => candidate.id === args.assessment_id)
+      if (assessment !== undefined && assessment.targetDigest !== undefined && assessment.targetDigest !== digestTarget(target)) {
+        return {
+          ok: false,
+          code: 'assessment_stale',
+          message: 'The target evidence digest changed after this assessment. Review the bundle diff and create a new claim assessment.',
+          assessed_digest: assessment.targetDigest,
+          current_digest: digestTarget(target),
+        }
+      }
+      try {
+        const attempt = recordAttempt({
+          targetId: args.id,
+          targetType: target.type,
+          assessment,
+          mode: args.mode,
+          equivalence: args.equivalence,
+          verdict: args.verdict,
+          commands: args.commands,
+          artifacts: args.artifacts,
+          metrics: args.metrics,
+          claimResults: args.claim_results,
+          resources: args.resources,
+          verifier: args.verifier,
+          deviations: args.deviations,
+          notes: args.notes,
+        })
+        if (!attempt.accepted) return { ok: false, code: 'insufficient_attempt_evidence', problems: attempt.problems, attempt }
+        const saved = await store.appendAttempt(args.id, attempt)
+        return { ok: true, attempt: saved.attempts[args.id].at(-1) }
+      } catch (error) {
+        return { ok: false, code: 'invalid_attempt', message: error.message }
+      }
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'frontier_repro_trackio_scaffold',
+    description: 'Export a file-only Hugging Face Trackio logbook scaffold for one evidence bundle and all saved claim attempts. Does not install, execute, publish, or create a competing experiment UI.',
+    parameters: { event_id: { type: 'string', required: true } },
+    output: jsonOutput(),
+    async execute(args) {
+      const data = await store.read()
+      const event = data.events[args.event_id]
+      if (event === undefined) return { ok: false, code: 'event_not_found', message: `No evidence bundle has id "${args.event_id}".` }
+      return {
+        ok: true,
+        scaffold: createTrackioScaffold({
+          event,
+          assessments: data.claimAssessments[event.id] ?? [],
+          attempts: data.attempts[event.id] ?? [],
+        }),
       }
     },
   }))
