@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.1
+
+- Add a DSH Web **Frontier Repro** plugin-settings card for write-only X API bearer-token configuration and configured/disabled status.
+- Print a bilingual installation reminder that X access is optional and identify the in-app configuration path.
+- Skip X sources from default collection when no X credential is configured; an explicit X-source request still returns the precise credential blocker.
+- Require DeepSeek Harness rc.7 for the external plugin-settings extension and test against the matching rc.7 runtime packages.
+- Add a focused project identity, direct release installation path, and clearer evidence-to-reproduction value proposition.
+
 ## 0.3.0
 
 - Cluster lab-scoped model releases into versioned Frontier Release Evidence Bundles spanning official posts, system cards/papers, code, models, datasets, evaluations, and verified person signals.
