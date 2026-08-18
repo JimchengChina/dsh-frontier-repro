@@ -1,8 +1,35 @@
-# dsh-frontier-repro
+<p align="center">
+  <img src="docs/assets/frontier-repro-hero.png" alt="Frontier Repro 将前沿 AI 一手信号转化为版本化证据包和经验证的复现结论" width="100%">
+</p>
+
+<h1 align="center">dsh-frontier-repro</h1>
+
+<p align="center"><strong>一手信号进入，可审计复现结论输出。</strong></p>
+
+<p align="center">
+  <a href="https://github.com/JimchengChina/dsh-frontier-repro/stargazers"><img src="https://img.shields.io/github/stars/JimchengChina/dsh-frontier-repro?style=flat-square&logo=github&label=Stars" alt="GitHub Stars"></a>
+  <a href="https://github.com/JimchengChina/dsh-frontier-repro/releases/latest"><img src="https://img.shields.io/github/v/release/JimchengChina/dsh-frontier-repro?style=flat-square&label=Release" alt="最新版本"></a>
+  <a href="https://github.com/JimchengChina/dsh-frontier-repro/releases"><img src="https://img.shields.io/github/downloads/JimchengChina/dsh-frontier-repro/total?style=flat-square&label=Downloads" alt="下载量"></a>
+  <a href="https://github.com/awesome-dsh-plugin/awesome-dsh-plugin#workflow"><img src="https://img.shields.io/badge/Awesome_DSH-Workflow-6f5cff?style=flat-square" alt="Awesome DSH 已收录"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-f2a65a?style=flat-square" alt="MIT 许可证"></a>
+</p>
+
+<p align="center">
+  <a href="README.md">English</a> ·
+  <a href="https://github.com/JimchengChina/dsh-frontier-repro/releases/latest">下载</a> ·
+  <a href="https://github.com/JimchengChina/dsh-frontier-repro/stargazers">为项目加 Star</a>
+</p>
 
 给 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 用的“一手信源 → 复现证据档案”插件。
 
 它不是另一个 AI 新闻阅读器，也不是另一个 arXiv 搜索/论文总结插件。它只做现有 DSH 插件尚未完整覆盖的一段链路：从经过身份约束的一手渠道发现前沿能力，把同一次模型/能力发布整理成可追溯版本的证据包，再进入 claim 级复现协议。每次尝试都会保留，包括失败和负结果；成功结论必须带命令、产物、逐项指标和 verifier 证据。
+
+| 发现真正重要的信号 | 建证据，不追热点 | 复现，但绝不夸大 |
+|---|---|---|
+| 聚合 arXiv、实验室官网、GitHub、Hugging Face、硬件厂商、已核验博客和可选 X 信号。 | 跨来源发布证据包保留不可变版本、出处、缺失证据与实质变化历史。 | claim 级协议保留命令、产物、指标、资源、verifier、失败与负结果。 |
+
+> [!TIP]
+> 如果它让一次前沿发布更容易被信任或复现，欢迎[给仓库加一个 Star](https://github.com/JimchengChina/dsh-frontier-repro/stargazers)，让更多 DSH 用户发现它。
 
 ## 为什么不是重复项目
 
@@ -58,16 +85,17 @@ DeepSeek 创始人和 GLM 核心人员没有被硬塞进默认 X 清单：目前
 
 ## 安装
 
-要求 Node.js `^22.19` 或 `>=24`，以及 DeepSeek Harness `0.1.0-rc.6` 兼容版本。
+要求 Node.js `^22.19` 或 `>=24`，以及 DeepSeek Harness `0.1.0-rc.7` 或同一 `0.1.x` 系列的更新版本。插件内 X 凭证配置卡片依赖 rc.7 新增的插件设置扩展。
 
 ```bash
-pnpm install
-dsh plugin --profile web add /absolute/path/to/dsh-frontier-repro
-# 或用于 CLI
-dsh plugin --profile headless add /absolute/path/to/dsh-frontier-repro
+dsh plugin --profile web add "https://github.com/JimchengChina/dsh-frontier-repro/releases/latest/download/dsh-frontier-repro.tgz"
 ```
 
+如需参与源码开发，再克隆仓库、执行 `pnpm install`，并通过绝对路径安装；headless profile 可将同一发布包配合 `--profile headless` 安装。
+
 重启对应 profile。默认数据保存在 `$DSH_HOME/frontier-repro/index.json`，文件和目录分别以 `0600` / `0700` 创建。
+
+安装过程会提示：X API 是可选项。进入 DSH Web 的 **设置 → 插件 → 插件配置 → Frontier Repro** 即可保存 X API Bearer Token。不配置时，X 信源默认关闭并从常规采集队列中跳过；arXiv、实验室官网、GitHub、Hugging Face 等其他信源照常工作。
 
 每个 tag release 会附带验证后的固定名安装包 `dsh-frontier-repro.tgz` 和 SHA-256 文件，插件市场可以直接使用 GitHub Release 包，无需现场源码构建。
 
@@ -136,14 +164,14 @@ dsh plugin --profile headless add /absolute/path/to/dsh-frontier-repro
 
 ## X API 条件
 
-设置凭证引用 `X_BEARER_TOKEN`：
+优先在 DSH Web 的 **设置 → 插件 → 插件配置 → Frontier Repro** 中填写。也可以设置凭证引用 `X_BEARER_TOKEN`：
 
 ```bash
 export X_BEARER_TOKEN='...'
 dsh web
 ```
 
-也可以通过 DSH 的 credentials 存储同名引用。插件每次采集重新解析凭证，不把值写进配置、语料库或工具输出。X 的访问和计费由 X API 账户决定；缺 token、账户无读取权限、额度不足时，`frontier_repro_status` / `collect` 会列明条件，其余来源继续工作。
+也可以通过 DSH 的 credentials 存储同名引用。插件每次采集重新解析凭证，不把值写进配置、语料库或工具输出。X 的访问和计费由 X API 账户决定；缺 token 时，默认采集直接跳过 X 信源，显式指定 X 信源时会列明缺失条件，其余来源继续工作。
 
 ## 配置
 

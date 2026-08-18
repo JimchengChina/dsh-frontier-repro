@@ -1,10 +1,35 @@
-# dsh-frontier-repro
+<p align="center">
+  <img src="docs/assets/frontier-repro-hero.png" alt="Frontier Repro turns primary AI signals into versioned evidence bundles and verified reproduction decisions" width="100%">
+</p>
+
+<h1 align="center">dsh-frontier-repro</h1>
+
+<p align="center"><strong>Primary signals in. Auditable reproduction out.</strong></p>
+
+<p align="center">
+  <a href="https://github.com/JimchengChina/dsh-frontier-repro/stargazers"><img src="https://img.shields.io/github/stars/JimchengChina/dsh-frontier-repro?style=flat-square&logo=github&label=Stars" alt="GitHub stars"></a>
+  <a href="https://github.com/JimchengChina/dsh-frontier-repro/releases/latest"><img src="https://img.shields.io/github/v/release/JimchengChina/dsh-frontier-repro?style=flat-square&label=Release" alt="Latest release"></a>
+  <a href="https://github.com/JimchengChina/dsh-frontier-repro/releases"><img src="https://img.shields.io/github/downloads/JimchengChina/dsh-frontier-repro/total?style=flat-square&label=Downloads" alt="Release downloads"></a>
+  <a href="https://github.com/awesome-dsh-plugin/awesome-dsh-plugin#workflow"><img src="https://img.shields.io/badge/Awesome_DSH-Workflow-6f5cff?style=flat-square" alt="Listed in Awesome DSH"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-f2a65a?style=flat-square" alt="MIT license"></a>
+</p>
+
+<p align="center">
+  <a href="README.zh-CN.md">中文</a> ·
+  <a href="https://github.com/JimchengChina/dsh-frontier-repro/releases/latest">Download</a> ·
+  <a href="https://github.com/JimchengChina/dsh-frontier-repro/stargazers">Star the project</a>
+</p>
 
 An evidence-first frontier AI radar and reproduction gate for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness).
 
 This is not another generic news reader, arXiv search engine, or paper summarizer. It covers the missing path from a curated primary-source signal to a versioned release evidence bundle and then to an auditable reproduction decision. Executed attempts are retained—including failures and negative results—and a successful exact/scaled claim requires commands, artifacts, measured claim results, and independent verifier evidence.
 
-[中文说明](README.zh-CN.md)
+| Discover what matters | Build evidence, not hype | Reproduce without overclaiming |
+|---|---|---|
+| Curated arXiv, first-party lab, GitHub, Hugging Face, hardware-vendor, verified blog, and optional X signals. | Cross-source release bundles retain immutable revisions, provenance, missing evidence, and substantive change history. | Claim-level protocols preserve commands, artifacts, metrics, resources, verifiers, failures, and negative results. |
+
+> [!TIP]
+> If this makes a frontier release easier to trust or reproduce, [give the repository a star](https://github.com/JimchengChina/dsh-frontier-repro/stargazers). It helps more DSH users find the project.
 
 ## What is different
 
@@ -65,22 +90,23 @@ No unverified DeepSeek-founder or GLM-person account is preloaded. Add a custom 
 
 ## Install
 
-Requires Node.js `^22.19` or `>=24` and a DSH `0.1.0-rc.6` compatible release.
+Requires Node.js `^22.19` or `>=24` and DeepSeek Harness `0.1.0-rc.7` or newer within the `0.1.x` line. The in-app X credential card uses the plugin-settings extension introduced in rc.7.
 
 ```sh
-pnpm install
-dsh plugin --profile web add /absolute/path/to/dsh-frontier-repro
-# or
-dsh plugin --profile headless add /absolute/path/to/dsh-frontier-repro
+dsh plugin --profile web add "https://github.com/JimchengChina/dsh-frontier-repro/releases/latest/download/dsh-frontier-repro.tgz"
 ```
 
+For source development, clone the repository, run `pnpm install`, and add its absolute path instead. Headless profiles can install the same release with `--profile headless`.
+
 Restart the selected profile. The default corpus is `$DSH_HOME/frontier-repro/index.json`.
+
+During installation, the plugin reminds you that X API access is optional. In DSH Web, open **Settings → Plugins → Plugin configuration → Frontier Repro** to save an X API bearer token. If you do not configure one, X sources are disabled and skipped by default; arXiv, official lab blogs, GitHub, Hugging Face, and all other sources continue normally.
 
 Tagged releases attach a verified package tarball and SHA-256 file. Storefronts can use `https://github.com/JimchengChina/dsh-frontier-repro/releases/latest/download/dsh-frontier-repro.tgz` without running a source build.
 
 ## X access
 
-Set `X_BEARER_TOKEN` in the launch environment or the DSH credentials store. The token is resolved for every collection and never enters config, the corpus, or tool output. Without X API access, the X sources report their exact missing condition and every other source continues.
+Use **Settings → Plugins → Plugin configuration → Frontier Repro** in DSH Web, set `X_BEARER_TOKEN` in the launch environment, or write the same reference through the DSH credentials store. The token is resolved for every collection and never enters config, the corpus, or tool output. Without X API access, default collection skips X sources and every other source continues. Explicitly requesting an X source still returns its exact missing condition.
 
 No HTML scraping fallback is used.
 

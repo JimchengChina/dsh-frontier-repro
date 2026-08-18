@@ -30,7 +30,11 @@
     "README.zh-CN.md",
     "CHANGELOG.md",
     "SECURITY.md",
-    "docs",
+    "docs/architecture.md",
+    "docs/awesome-entry.yml",
+    "docs/reproduction-manifest.schema.json",
+    "docs/research.md",
+    "docs/source-policy.md",
     "scripts",
     "LICENSE"
   ],
