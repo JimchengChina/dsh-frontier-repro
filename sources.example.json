@@ -1,5 +1,18 @@
 [
   {
+    "id": "your-lab-github",
+    "type": "github_org",
+    "sourceClass": "official_artifact",
+    "lab": "Your Lab",
+    "name": "Your Lab GitHub releases",
+    "url": "https://api.github.com/orgs/your-lab/repos",
+    "organization": "your-lab",
+    "identityEvidenceUrl": "https://github.com/your-lab",
+    "releaseRepoLimit": 4,
+    "releasesPerRepo": 2,
+    "maxItems": 10
+  },
+  {
     "id": "your-lab-research-feed",
     "type": "feed",
     "sourceClass": "official_lab",

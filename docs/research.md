@@ -18,7 +18,7 @@ The [`dsh-plugin` GitHub topic](https://github.com/topics/dsh-plugin) and reposi
 - [`dsh-forge`](https://github.com/zhn1100/dsh-forge): an isolated DSH plugin-development and validation profile.
 - Other repositories already cover arXiv search, chat-with-paper, literature management, generic web search, and daily news digests.
 
-Therefore this plugin does not expose generic `arxiv_search`, `read_paper`, `news_feed`, citation, PDF, note-taking, weekly-report, or scheduler tools. Its unique state is a cross-channel primary-source record joined to (1) a mode-specific evidence matrix and (2) separately recorded execution evidence.
+Therefore this plugin does not expose generic `arxiv_search`, `read_paper`, `news_feed`, citation, PDF, note-taking, weekly-report, scheduler, notebook, or experiment-dashboard tools. Its unique state is a versioned cross-channel release evidence bundle joined to (1) claim-level reproduction conditions and (2) append-only, verifier-backed execution attempts.
 
 `dsh-paper-workshop` is the closest neighbor because it includes a reproduction stage/checklist. The boundary is intentional: Paper Workshop owns learning and paper-by-paper knowledge management; Frontier Repro owns cross-source detection, person/lab provenance, readiness gating, explicit downgrade semantics, and rejection of unsupported run-success claims. They can be installed together: use the literature/workshop tools for full-text study, then feed verified evidence into `frontier_repro_assess`.
 
@@ -51,10 +51,14 @@ The resulting rule is deliberately conservative:
 3. Exact, scaled, and behavioral reproductions are different claims and cannot be silently upgraded.
 4. A successful run must retain commands, artifacts, measurements, and deviations.
 5. Missing licenses, access rights, evaluation, or safety scope are first-class blockers, not footnotes.
+6. Claims are graded independently; a successful attempt requires a verifier, and toy equivalence can never become a reproduced result.
+7. Failed, blocked, and negative attempts are retained so later success cannot erase the experimental path.
 
 ## Related implementation patterns
 
 - Hugging Face Paper Pages provide structured paper-to-model/dataset/Space/repository links. These links are useful artifact candidates but remain community-maintained metadata, so the primary arXiv provenance is retained.
 - OpenAI PaperBench separates rollout, reproduction in a fresh container, and rubric grading. Frontier Repro adopts the state separation without embedding an execution sandbox.
-- DVC and MLflow already own full experiment versioning/tracking. This plugin exports bounded handoff metadata instead of becoming another experiment platform.
+- The [GitHub REST Releases API](https://docs.github.com/en/rest/releases/releases) exposes tags, publication state, assets, and asset digests. The GitHub organization adapter uses these first-party structures and resolves tag commits rather than treating mutable repository heads as release proof.
+- [Hugging Face Trackio](https://huggingface.co/docs/trackio/index) already owns local-first grouped experiment logs, metrics, and versioned artifact references. Frontier Repro exports a Trackio scaffold with every attempt instead of becoming another experiment platform.
+- DVC and MLflow already own full experiment versioning/tracking. This plugin exports bounded handoff metadata instead of duplicating them.
 - RO-Crate and in-toto motivate portable entity graphs and material/product/byproduct terminology. The plugin uses canonical digests and explicit edges, but does not claim either standard's complete schema or signature guarantees.

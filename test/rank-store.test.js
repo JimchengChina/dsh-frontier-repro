@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp } from 'node:fs/promises'
+import { mkdtemp, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import test from 'node:test'
@@ -120,11 +120,31 @@ test('collection commits journal their bounded inverse and migrate version one s
     finishedAt: '2026-08-17T00:00:02Z', input: { query: 'agents' }, partial: false,
     sources: [{ id: 'arxiv', ok: true, count: 2, warnings: [] }], enrichments: {},
   })
-  assert.equal(committed.version, 2)
+  assert.equal(committed.version, 3)
+  assert.equal(Object.keys(committed.events).length, 2)
   assert.equal(committed.collections.length, 1)
   assert.equal(committed.collections[0].digest.length, 64)
   assert.deepEqual(committed.collections[0].inverse.addedIds, ['new'])
   assert.equal(committed.collections[0].inverse.previousRecords[0].summary, record().summary)
+})
+
+test('version two stores migrate release bundles and claim-attempt collections without data loss', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'frontier-store-v2-'))
+  const filename = join(root, 'index.json')
+  await writeFile(filename, JSON.stringify({
+    version: 2,
+    records: [record()],
+    assessments: { r1: { status: 'ready_scaled' } },
+    runs: { r1: [{ verdict: 'partial' }] },
+    collections: [],
+    sourceHealth: {},
+  }))
+  const data = await new FrontierStore(filename).read()
+  assert.equal(data.version, 3)
+  assert.equal(Object.keys(data.events).length, 1)
+  assert.equal(data.assessments.r1.status, 'ready_scaled')
+  assert.deepEqual(data.claimAssessments, {})
+  assert.deepEqual(data.attempts, {})
 })
 
 test('latest collection reversion restores prior records in LIFO order', async () => {
@@ -152,6 +172,19 @@ test('collection reversion refuses to orphan later evidence', async () => {
     return true
   })
   assert.equal((await store.read()).collections[0].state, 'committed')
+})
+
+test('collection reversion refuses to orphan a watched evidence bundle', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'frontier-store-watch-revert-'))
+  const store = new FrontierStore(join(root, 'index.json'), 3, 5)
+  const committed = await store.commitCollection([record({ id: 'new' })], { id: 'batch-1', input: {}, sources: [], enrichments: {} })
+  const eventId = Object.keys(committed.events)[0]
+  await store.saveWatch(eventId, 'add')
+  await assert.rejects(store.revertLatestCollection('batch-1'), error => {
+    assert.equal(error.code, 'collection_has_dependents')
+    assert.deepEqual(error.details.eventIds, [eventId])
+    return true
+  })
 })
 
 test('source health tracks drift, failure streaks, and dynamic staleness', async () => {

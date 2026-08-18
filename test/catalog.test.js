@@ -26,7 +26,7 @@ test('every built-in source has a normalized capability declaration', () => {
   assert.equal(sources.length > 0, true)
   assert.equal(sources.every(item => item.requires.includes('network:https')), true)
   assert.equal(['anthropic-research', 'kimi-blog', 'deepseek-transparency', 'moonshot-models', 'minimax-research',
-    'minimax-models', 'nvidia-technical-blog', 'amd-rocm-blog', 'intel-ai-news']
+    'minimax-models', 'nvidia-technical-blog', 'amd-rocm-blog', 'intel-ai-news', 'deepseek-github']
     .every(id => sources.some(source => source.id === id)), true)
 })
 
