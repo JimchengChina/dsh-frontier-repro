@@ -25,6 +25,7 @@ test('Hugging Face paper metadata becomes bounded public artifact candidates', (
 test('private Hub repositories and mismatched paper ids are rejected', () => {
   const result = huggingFacePaperEnrichment({ id: '2608.00001', linkedModels: [{ id: 'lab/private', private: true }] }, '2608.00001')
   assert.deepEqual(result.artifacts, [])
+  assert.equal(Object.hasOwn(result.paperDiscovery, 'githubStars'), false)
   assert.throws(() => huggingFacePaperEnrichment({ id: 'wrong' }, '2608.00001'), /did not match/)
 })
 
@@ -79,4 +80,7 @@ test('GitHub enrichment accepts a canonical rename only after an API redirect', 
   })
   assert.equal(patch.repositoryUrl, 'https://github.com/lobehub/lobehub')
   assert.equal(patch.redirectedFrom, 'https://github.com/lobehub/lobe-chat')
+  assert.equal(Object.hasOwn(patch, 'license'), false)
+  assert.equal(Object.hasOwn(patch, 'stars'), false)
+  assert.equal(Object.hasOwn(patch, 'pushedAt'), false)
 })
